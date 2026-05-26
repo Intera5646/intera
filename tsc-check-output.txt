@@ -1,0 +1,115 @@
+﻿node_modules/next/dist/build/webpack-config.d.ts(10,104): error TS2694: Namespace '"C:/Users/1111/Desktop/intera-app/node_modules/next/dist/compiled/webpack/webpack".webpack' has no exported member 'RuleSetUseItem'.
+node_modules/next/dist/build/webpack/loaders/next-app-loader/index.d.ts(1,13): error TS2613: Module '"C:/Users/1111/Desktop/intera-app/node_modules/next/dist/compiled/webpack/webpack"' has no default export. Did you mean to use 'import { webpack } from "C:/Users/1111/Desktop/intera-app/node_modules/next/dist/compiled/webpack/webpack"' instead?
+node_modules/next/dist/client/components/error-boundary.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/client/components/http-access-fallback/error-boundary.d.ts(11,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/client/components/layout-router.d.ts(3,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/client/components/segment-cache/cache.d.ts(104,21): error TS2304: Cannot find name 'PromiseWithResolvers'.
+node_modules/next/dist/client/link.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/client/with-router.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/lib/metadata/metadata.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/next-devtools/userspace/pages/pages-dev-overlay-setup.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/server/app-render/entry-base.d.ts(1,114): error TS2307: Cannot find module 'react-server-dom-webpack/server' or its corresponding type declarations.
+node_modules/next/dist/server/app-render/entry-base.d.ts(2,27): error TS2307: Cannot find module 'react-server-dom-webpack/static' or its corresponding type declarations.
+node_modules/next/dist/server/web/spec-extension/adapters/headers.d.ts(39,16): error TS2304: Cannot find name 'HeadersIterator'.
+node_modules/next/dist/server/web/spec-extension/adapters/headers.d.ts(40,13): error TS2304: Cannot find name 'HeadersIterator'.
+node_modules/next/dist/server/web/spec-extension/adapters/headers.d.ts(41,15): error TS2304: Cannot find name 'HeadersIterator'.
+node_modules/next/dist/server/web/spec-extension/adapters/headers.d.ts(42,26): error TS2304: Cannot find name 'HeadersIterator'.
+node_modules/next/dist/shared/lib/app-router-context.shared-runtime.d.ts(4,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/app-router-types.d.ts(7,13): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/head-manager-context.shared-runtime.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/image-config-context.shared-runtime.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/loadable-context.shared-runtime.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/loadable.shared-runtime.d.ts(21,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/router-context.shared-runtime.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/server-inserted-html.shared-runtime.d.ts(1,8): error TS1259: Module '"C:/Users/1111/Desktop/intera-app/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/next/dist/shared/lib/utils.d.ts(10,13): error TS1192: Module '"fs"' has no default export.
+src/app/admin/generations/page.tsx(38,5): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(119,5): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(120,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(121,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(122,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(123,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(127,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(128,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(129,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(131,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(145,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(149,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(154,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(155,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(156,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(157,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(158,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(159,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(160,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(161,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(162,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(163,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(164,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(165,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(168,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(170,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(171,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(174,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(175,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(176,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(177,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(178,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(179,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/generations/page.tsx(180,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(21,5): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(31,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(32,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(44,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(45,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(46,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(50,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(51,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(54,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(58,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(74,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(75,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(81,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(82,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(83,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(95,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(96,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(97,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(106,34): error TS2339: Property 'get' does not exist on type 'Promise<ReadonlyHeaders>'.
+src/app/admin/layout.tsx(115,5): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(116,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/layout.tsx(117,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(1,29): error TS6142: Module './GrantTokensForm' was resolved to 'C:/Users/1111/Desktop/intera-app/src/app/admin/tokens/GrantTokensForm.tsx', but '--jsx' is not set.
+src/app/admin/tokens/page.tsx(100,5): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(101,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(102,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(103,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(106,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(112,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(113,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(114,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(115,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(116,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(120,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(123,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(124,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(125,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(126,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(127,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(131,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(132,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(133,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(134,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(135,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(136,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(137,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(138,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(139,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(142,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(144,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(145,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(148,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(149,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(150,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/app/admin/tokens/page.tsx(151,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+src/lib/auth.ts(1,8): error TS1192: Module '"crypto"' has no default export.

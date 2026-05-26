@@ -1,0 +1,254 @@
+/* INTERA — Cream / Mocha aesthetic. v2 */
+:root {
+  /* Surfaces */
+  --bg:        #F2EBDE;
+  --bg-2:      #EBE2D2;
+  --paper:     #FBF7F0;
+  --white:     #FFFFFF;
+  --card:      #FFFFFF;
+
+  /* Accents */
+  --mocha:     #B8A083;     /* primary CTA fill */
+  --mocha-2:   #A28969;     /* mocha hover */
+  --mocha-l:   #D9C9B0;     /* light mocha (selected states, swatches) */
+  --gold:      #C9A878;     /* logo gold */
+  --gold-d:    #A88A56;
+
+  /* Ink */
+  --ink:       #221E1A;     /* near-black for body */
+  --ink-2:     #3D3630;
+  --muted:     #8C8275;
+  --muted-2:   #B6AB9B;
+  --line:      rgba(34, 30, 26, 0.08);
+  --line-2:    rgba(34, 30, 26, 0.14);
+
+  /* Status */
+  --ok:        #6E8B5A;
+  --brand-primary: #0D1B2A;
+  --brand-surface: #F5F0E8;
+  --brand-accent: #E85D3A;
+  --brand-gold: #C9A84C;
+}
+
+* { -webkit-font-smoothing: antialiased; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+}
+
+/* Typography */
+.serif {
+  font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+}
+.serif-700 { font-family: 'Cormorant Garamond', serif; font-weight: 600; letter-spacing: 0.02em; }
+
+/* Wordmark for "INTERA" — wide-tracked serif caps */
+.wordmark {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.smallcaps {
+  font-family: 'Manrope', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* Layout */
+.scr {
+  width: 100%; height: 100%;
+  box-sizing: border-box; position: relative;
+  font-family: 'Manrope', system-ui, sans-serif;
+  letter-spacing: -0.005em;
+  background: var(--bg);
+  color: var(--ink);
+}
+.scr.paper { background: var(--paper); }
+.scr.cream { background: var(--bg); }
+
+.row { display: flex; align-items: center; }
+.col { display: flex; flex-direction: column; }
+.gap-4 { gap: 4px; } .gap-6 { gap: 6px; } .gap-8 { gap: 8px; }
+.gap-10 { gap: 10px; } .gap-12 { gap: 12px; } .gap-14 { gap: 14px; }
+.gap-16 { gap: 16px; } .gap-20 { gap: 20px; } .gap-24 { gap: 24px; }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  height: 54px; padding: 0 22px; border-radius: 14px;
+  font-family: 'Manrope', sans-serif; font-weight: 600;
+  font-size: 15px; letter-spacing: 0.01em;
+  border: 0; cursor: pointer; white-space: nowrap;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.btn:active { transform: scale(0.98); }
+.btn--dark   { background: #1A1614; color: var(--paper); }
+.btn--mocha  { background: var(--mocha); color: var(--paper); }
+.btn--mocha:hover { background: var(--mocha-2); }
+.btn--brand { background: var(--brand-accent); color: var(--paper); }
+.btn--brand:hover { background: #d14d32; }
+.btn--ghost  { background: transparent; color: var(--ink); border: 1px solid var(--line-2); }
+.btn--soft   { background: rgba(184,160,131,0.18); color: var(--ink-2); }
+.btn--block  { width: 100%; }
+
+/* Header bar (back arrow + title) */
+.tophdr {
+  position: absolute; top: 54px; left: 0; right: 0;
+  padding: 6px 18px;
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 44px;
+}
+.icobtn {
+  width: 38px; height: 38px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; color: var(--ink); flex-shrink: 0;
+}
+.icobtn.tinted { background: rgba(34,30,26,0.05); }
+
+/* Cards */
+.card {
+  background: var(--card); border-radius: 18px; padding: 14px;
+  border: 1px solid var(--line);
+}
+
+/* Inputs */
+.input {
+  display: flex; align-items: center; gap: 10px;
+  height: 50px; padding: 0 16px; border-radius: 12px;
+  background: var(--paper); border: 1px solid var(--line);
+  font-size: 14px; color: var(--ink);
+}
+.input input {
+  border: 0; background: transparent; outline: none; flex: 1;
+  font-family: inherit; font-size: 14px; color: inherit;
+}
+.input input::placeholder { color: var(--muted-2); }
+
+/* Pills (chips) */
+.pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; border-radius: 999px;
+  font-size: 13px; font-weight: 600;
+  background: var(--paper); color: var(--ink-2); border: 1px solid var(--line);
+}
+.pill.sel { background: var(--mocha); color: var(--paper); border-color: var(--mocha); }
+.pill.gold { background: rgba(201,168,120,0.18); color: var(--gold-d); border-color: rgba(201,168,120,0.4); }
+
+/* Tab bar */
+.tabbar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 12px 16px 26px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  background: rgba(251, 247, 240, 0.85);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border-top: 1px solid var(--line);
+}
+.tab {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  flex: 1; padding: 4px 0;
+  font-size: 10.5px; font-weight: 600; color: var(--muted);
+  letter-spacing: 0.01em;
+}
+.tab.active { color: var(--ink); }
+
+/* Placeholder room — beige minimalist toned */
+.room {
+  position: relative; overflow: hidden;
+  background:
+    radial-gradient(120% 70% at 30% 25%, rgba(245,232,210,0.95) 0%, rgba(218,196,168,0.2) 55%, transparent 80%),
+    radial-gradient(140% 100% at 80% 110%, rgba(184,160,131,0.55) 0%, transparent 60%),
+    linear-gradient(180deg, #EFE3D0 0%, #DDCBB1 60%, #B89B79 100%);
+}
+.room.dim {
+  background:
+    radial-gradient(120% 70% at 30% 25%, rgba(232,216,190,0.6) 0%, transparent 60%),
+    linear-gradient(180deg, #D6C5AC 0%, #BFA88A 50%, #8E7857 100%);
+}
+.room.light {
+  background:
+    radial-gradient(120% 70% at 30% 25%, rgba(255,248,232,1) 0%, transparent 60%),
+    linear-gradient(180deg, #F6ECD8 0%, #E6D5B7 60%, #C7B08C 100%);
+}
+.room::after {
+  /* faint horizon */
+  content: ''; position: absolute; left: 0; right: 0; top: 64%;
+  height: 1px; background: rgba(255,255,255,0.25);
+}
+.room::before {
+  /* hint of an arch */
+  content: ''; position: absolute; left: 50%; top: 14%;
+  width: 38%; height: 50%; transform: translateX(-50%);
+  border-radius: 50% 50% 4px 4px / 35% 35% 4px 4px;
+  background: rgba(255,253,247,0.22);
+  border: 1px solid rgba(255,253,247,0.28);
+}
+.room.flat::before, .room.flat::after { display: none; }
+
+/* Section header */
+.sec-title {
+  font-size: 14px; font-weight: 600; color: var(--ink-2);
+  letter-spacing: 0.005em; margin: 0;
+}
+
+/* List divider */
+.divider { height: 1px; background: var(--line); }
+
+/* Plate (mocha-on-paper info plate) */
+.plate {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex; align-items: center; gap: 12px;
+}
+
+/* Subtle scrollbar hide */
+.scr ::-webkit-scrollbar { display: none; }
+
+/* Animations */
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+.spin { animation: spin 1.4s linear infinite; transform-origin: center; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.2; transform: scale(0.85); }
+  50%      { opacity: 0.9; transform: scale(1.08); }
+}
+.pulse { animation: pulse 1.8s ease-in-out infinite; }
+
+/* Decorative botanical hint (corner accent) */
+.botanical {
+  position: absolute; pointer-events: none; opacity: 0.55;
+}
+
+/* Render image frame (the result render) */
+.render {
+  position: relative; overflow: hidden;
+  border-radius: 18px;
+  background:
+    radial-gradient(130% 70% at 70% 35%, #F4E7CE 0%, transparent 60%),
+    radial-gradient(140% 80% at 20% 90%, #C7B08C 0%, transparent 55%),
+    linear-gradient(180deg, #E8D6B8 0%, #D4BC97 50%, #B59774 100%);
+}
+
+/* Avatar */
+.avatar {
+  border-radius: 50%; overflow: hidden;
+  background:
+    radial-gradient(60% 50% at 50% 35%, #E8D5BA 0%, transparent 70%),
+    linear-gradient(180deg, #C9AC85 0%, #8C7355 100%);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--paper); font-family: 'Cormorant Garamond', serif;
+  font-weight: 600;
+}
