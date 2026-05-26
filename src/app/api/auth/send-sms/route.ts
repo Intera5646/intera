@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
 
   const message = `INTERA: код подтверждения ${code}. Не сообщайте его никому.`;
   const params = new URLSearchParams({
-    api_id: SMSRU_API_KEY,
+    api_id: SMSRU_API_KEY ?? '',
     to: phone,
     msg: message,
     json: '1',

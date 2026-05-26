@@ -45,5 +45,12 @@ async function generateReplicate(params: GenerationParams): Promise<string[]> {
     throw new Error('Generation provider returned no output.');
   }
 
-  return Array.isArray(output) ? output : [output];
+  const items = Array.isArray(output) ? output : [output];
+  return items.map((item: unknown) => {
+    if (typeof item === 'string') return item;
+    const obj = item as Record<string, unknown>;
+    if (typeof obj?.url === 'function') return (obj.url as () => string)();
+    if (typeof obj?.url === 'string') return obj.url;
+    return String(item);
+  });
 }

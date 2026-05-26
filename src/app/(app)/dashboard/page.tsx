@@ -38,7 +38,7 @@ export default async function DashboardPage() {
       console.log('[DashboardPage] Token balance:', tokenBalance)
     }
 
-    let projects = []
+    let projects: typeof projectsResult.data = []
     if (projectsResult.error) {
       console.error('[DashboardPage] Projects query error:', projectsResult.error.message)
     } else if (projectsResult.data) {
