@@ -19,7 +19,7 @@ export default async function DashboardPage() {
     const [profileResult, projectsResult] = await Promise.all([
       supabaseServer
         .from('profiles')
-        .select('token_balance')
+        .select('token_balance, name')
         .eq('id', userId)
         .single(),
       supabaseServer
@@ -31,11 +31,21 @@ export default async function DashboardPage() {
     ])
 
     let tokenBalance = 0
+    let userName = ''
     if (profileResult.error) {
       console.error('[DashboardPage] Profile query error:', profileResult.error.message)
     } else if (profileResult.data) {
       tokenBalance = profileResult.data.token_balance ?? 0
+      userName = (profileResult.data as { token_balance: number; name?: string | null }).name ?? ''
       console.log('[DashboardPage] Token balance:', tokenBalance)
+    }
+
+    let userEmail = ''
+    try {
+      const { data: authData } = await supabaseServer.auth.admin.getUserById(userId)
+      userEmail = authData?.user?.email ?? ''
+    } catch (authErr) {
+      console.error('[DashboardPage] Auth admin getUserById error:', authErr)
     }
 
     let projects: typeof projectsResult.data = []
@@ -46,9 +56,16 @@ export default async function DashboardPage() {
       console.log('[DashboardPage] Projects loaded:', projects.length)
     }
 
-    return <DashboardClient initialTokenBalance={tokenBalance} initialProjects={projects} />
+    return (
+      <DashboardClient
+        initialTokenBalance={tokenBalance}
+        initialProjects={projects}
+        userName={userName}
+        userEmail={userEmail}
+      />
+    )
   } catch (error) {
     console.error('[DashboardPage] Unexpected error:', error)
-    return <DashboardClient initialTokenBalance={0} initialProjects={[]} />
+    return <DashboardClient initialTokenBalance={0} initialProjects={[]} userName="" userEmail="" />
   }
 }

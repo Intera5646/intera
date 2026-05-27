@@ -26,9 +26,11 @@ interface Project {
 interface DashboardClientProps {
   initialTokenBalance: number
   initialProjects: Project[]
+  userName?: string
+  userEmail?: string
 }
 
-export default function DashboardClient({ initialTokenBalance, initialProjects }: DashboardClientProps) {
+export default function DashboardClient({ initialTokenBalance, initialProjects, userName, userEmail }: DashboardClientProps) {
   const router = useRouter()
 
   const processedProjects = initialProjects.map((project) => ({
@@ -37,6 +39,8 @@ export default function DashboardClient({ initialTokenBalance, initialProjects }
     statusLabel: statusLabels[project.status] ?? project.status,
     date: project.created_at ? new Date(project.created_at).toLocaleDateString('ru-RU') : '',
   }))
+
+  const userIdentifier = userName || userEmail || ''
 
   return (
     <main className="dashboard-screen" style={{ minHeight: '100vh', background: 'var(--brand-surface)' }}>
@@ -50,9 +54,18 @@ export default function DashboardClient({ initialTokenBalance, initialProjects }
               Ваши проекты и баланс токенов находятся здесь. Начните новый интерьерный проект прямо сейчас.
             </p>
           </div>
-          <button className="btn btn--brand" style={{ width: 220 }} onClick={() => router.push('/projects/new')}>
-            Создать новый проект
-          </button>
+          <div>
+            <button className="btn btn--brand" style={{ width: 220 }} onClick={() => router.push('/projects/new')}>
+              Создать новый проект
+            </button>
+            {userIdentifier && (
+              <div style={{ marginTop: 8, textAlign: 'right', fontSize: 12, color: 'var(--muted)' }}>
+                {userIdentifier}{' '}
+                <span>·</span>{' '}
+                <a href="/api/auth/logout" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Выйти</a>
+              </div>
+            )}
+          </div>
         </div>
 
         <section style={{ marginTop: 28, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, alignItems: 'stretch' }}>
