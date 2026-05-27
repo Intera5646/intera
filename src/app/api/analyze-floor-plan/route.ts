@@ -7,37 +7,57 @@ interface AnalysisResult {
   roomCount: number;
   rooms: RoomInfo[];
   room_names: string[];
+  debug_raw_response?: string;
+}
+
+// ── Download image → base64 data URL ─────────────────────────────────────────
+// Sending base64 bypasses all URL access issues (private buckets, signed URL
+// expiry, firewall). The model receives the image bytes directly.
+async function toBase64DataUrl(imageUrl: string): Promise<string> {
+  console.log('[analyze] Downloading image for base64 encoding:', imageUrl.slice(0, 120));
+
+  // First try: get a signed URL from Supabase so the download itself succeeds
+  const downloadUrl = await toSignedUrl(imageUrl);
+
+  const res = await fetch(downloadUrl);
+  if (!res.ok) {
+    throw new Error(`Failed to download image: HTTP ${res.status} from ${downloadUrl.slice(0, 80)}`);
+  }
+
+  const contentType = res.headers.get('content-type') ?? 'image/jpeg';
+  // Normalise to a valid image MIME type
+  const mime = contentType.startsWith('image/') ? contentType.split(';')[0] : 'image/jpeg';
+
+  const buffer = await res.arrayBuffer();
+  const base64 = Buffer.from(buffer).toString('base64');
+  console.log('[analyze] Image downloaded — mime:', mime, '| size:', buffer.byteLength, 'bytes | base64 length:', base64.length);
+
+  return `data:${mime};base64,${base64}`;
 }
 
 // ── URL helper: convert Supabase public URL → signed URL ─────────────────────
-// Public URLs only work when the bucket is set to public in Supabase dashboard.
-// A signed URL works regardless of bucket policy and is accessible by Qwen.
 async function toSignedUrl(imageUrl: string): Promise<string> {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-    // Match both /object/public/ and /object/authenticated/ variants
     const prefix = `${supabaseUrl}/storage/v1/object/`;
     if (!imageUrl.startsWith(prefix)) {
       console.log('[analyze] URL is not Supabase Storage, using as-is:', imageUrl.slice(0, 80));
       return imageUrl;
     }
 
-    // Extract: <bucket>/<path> from either:
-    //   .../object/public/<bucket>/<path>
-    //   .../object/authenticated/<bucket>/<path>
     const afterPrefix = imageUrl.slice(prefix.length);
     const withoutVisibility = afterPrefix.replace(/^(public|authenticated|sign)\//, '');
     const slashIdx = withoutVisibility.indexOf('/');
     if (slashIdx === -1) return imageUrl;
 
     const bucket = withoutVisibility.slice(0, slashIdx);
-    const filePath = withoutVisibility.slice(slashIdx + 1).split('?')[0]; // strip query params
+    const filePath = withoutVisibility.slice(slashIdx + 1).split('?')[0];
 
     console.log('[analyze] Generating signed URL — bucket:', bucket, '| path:', filePath);
 
     const { data, error } = await supabaseServer.storage
       .from(bucket)
-      .createSignedUrl(filePath, 3600); // 1 hour — enough for Qwen analysis
+      .createSignedUrl(filePath, 3600);
 
     if (error || !data?.signedUrl) {
       console.warn('[analyze] createSignedUrl failed:', error?.message, '— using original URL');
@@ -74,21 +94,26 @@ export async function POST(req: NextRequest) {
 
   console.log('[analyze] Raw image URL received:', imageUrl.slice(0, 120));
 
-  // Convert to signed URL so external AI services can access the file
-  const accessUrl = await toSignedUrl(imageUrl);
+  // Download image and encode as base64 so vision models receive bytes directly
+  let base64DataUrl: string;
+  try {
+    base64DataUrl = await toBase64DataUrl(imageUrl);
+  } catch (err) {
+    console.error('[analyze] Image download failed:', err instanceof Error ? err.message : err);
+    return NextResponse.json({ success: false, error: 'IMAGE_DOWNLOAD_FAILED' }, { status: 400 });
+  }
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const groqKey = process.env.GROQ_API_KEY;
 
   console.log('[analyze] OPENROUTER_API_KEY present:', !!openRouterKey);
   console.log('[analyze] GROQ_API_KEY present:', !!groqKey);
-  console.log('[analyze] Sending URL to vision model:', accessUrl.slice(0, 120));
 
   // Try OpenRouter Qwen2-VL-72B first
   if (openRouterKey) {
     try {
-      console.log('[analyze] Calling OpenRouter Qwen2-VL-72B...');
-      const result = await analyzeWithOpenRouter(accessUrl, openRouterKey);
+      console.log('[analyze] Calling OpenRouter Qwen2-VL-72B with base64 image...');
+      const result = await analyzeWithOpenRouter(base64DataUrl, openRouterKey);
       if (result) {
         console.log('[analyze] OpenRouter success — roomCount:', result.roomCount, '| rooms:', result.room_names.join(', '));
         return NextResponse.json({ success: true, ...result });
@@ -101,11 +126,11 @@ export async function POST(req: NextRequest) {
     console.log('[analyze] Skipping OpenRouter (no API key)');
   }
 
-  // Fallback: Groq LLaMA 3.2 90B Vision
+  // Fallback: Groq LLaMA 3.2 vision
   if (groqKey) {
     try {
-      console.log('[analyze] Calling Groq LLaMA 3.2 90B Vision...');
-      const result = await analyzeWithGroq(accessUrl, groqKey);
+      console.log('[analyze] Calling Groq vision with base64 image...');
+      const result = await analyzeWithGroq(base64DataUrl, groqKey);
       if (result) {
         console.log('[analyze] Groq success — roomCount:', result.roomCount, '| rooms:', result.room_names.join(', '));
         return NextResponse.json({ success: true, ...result });
@@ -119,7 +144,7 @@ export async function POST(req: NextRequest) {
   }
 
   console.log('[analyze] Both providers failed — returning safe default: roomCount 1');
-  return NextResponse.json({ success: true, roomCount: 1, rooms: [], room_names: [] });
+  return NextResponse.json({ success: true, roomCount: 1, rooms: [], room_names: [], debug_raw_response: 'both_providers_failed' });
 }
 
 // ── Prompt ────────────────────────────────────────────────────────────────────
@@ -207,6 +232,7 @@ function parseAnalysisResponse(content: string): AnalysisResult | null {
       roomCount: Math.min(count, 20),
       rooms,
       room_names: rooms.map((r) => r.name),
+      debug_raw_response: content.slice(0, 1000),
     };
   } catch (e) {
     console.warn('[analyze] JSON parse failed:', e, '| content was:', content.slice(0, 300));
@@ -216,7 +242,7 @@ function parseAnalysisResponse(content: string): AnalysisResult | null {
 
 // ── OpenRouter Qwen2-VL-72B ───────────────────────────────────────────────────
 
-async function analyzeWithOpenRouter(imageUrl: string, apiKey: string): Promise<AnalysisResult | null> {
+async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Promise<AnalysisResult | null> {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -231,13 +257,11 @@ async function analyzeWithOpenRouter(imageUrl: string, apiKey: string): Promise<
         {
           role: 'user',
           content: [
-            { type: 'image_url', image_url: { url: imageUrl } },
+            { type: 'image_url', image_url: { url: base64DataUrl } },
             { type: 'text', text: USER_PROMPT },
           ],
         },
       ],
-      // NOTE: response_format omitted — not all vision endpoints support it;
-      // the prompt instructs the model to return JSON only
       max_tokens: 1024,
       temperature: 0,
     }),
@@ -245,6 +269,7 @@ async function analyzeWithOpenRouter(imageUrl: string, apiKey: string): Promise<
 
   const responseText = await res.text();
   console.log('[analyze] OpenRouter HTTP status:', res.status);
+  console.log('[analyze] OpenRouter raw response:', responseText.slice(0, 600));
 
   if (!res.ok) {
     throw new Error(`OpenRouter HTTP ${res.status}: ${responseText.slice(0, 300)}`);
@@ -252,7 +277,11 @@ async function analyzeWithOpenRouter(imageUrl: string, apiKey: string): Promise<
 
   const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
   const content = data?.choices?.[0]?.message?.content ?? '';
-  return parseAnalysisResponse(content);
+  const result = parseAnalysisResponse(content);
+  if (result) {
+    result.debug_raw_response = content.slice(0, 1000);
+  }
+  return result;
 }
 
 // ── Groq vision models ────────────────────────────────────────────────────────
@@ -263,7 +292,7 @@ const GROQ_VISION_MODELS = [
   'llama-3.2-11b-vision-preview',
 ] as const;
 
-async function analyzeWithGroq(imageUrl: string, apiKey: string): Promise<AnalysisResult | null> {
+async function analyzeWithGroq(base64DataUrl: string, apiKey: string): Promise<AnalysisResult | null> {
   for (const model of GROQ_VISION_MODELS) {
     try {
       console.log('[analyze] Trying Groq model:', model);
@@ -279,12 +308,11 @@ async function analyzeWithGroq(imageUrl: string, apiKey: string): Promise<Analys
             {
               role: 'user',
               content: [
-                { type: 'image_url', image_url: { url: imageUrl } },
+                { type: 'image_url', image_url: { url: base64DataUrl } },
                 { type: 'text', text: USER_PROMPT },
               ],
             },
           ],
-          // NOTE: response_format NOT sent — Groq vision models return 400 with it
           max_tokens: 1024,
           temperature: 0,
         }),
@@ -292,16 +320,20 @@ async function analyzeWithGroq(imageUrl: string, apiKey: string): Promise<Analys
 
       const responseText = await res.text();
       console.log('[analyze] Groq', model, 'HTTP status:', res.status);
+      console.log('[analyze] Groq', model, 'raw response:', responseText.slice(0, 600));
 
       if (!res.ok) {
         console.warn('[analyze] Groq', model, 'failed:', responseText.slice(0, 200));
-        continue; // try next model
+        continue;
       }
 
       const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
       const content = data?.choices?.[0]?.message?.content ?? '';
       const result = parseAnalysisResponse(content);
-      if (result) return result;
+      if (result) {
+        result.debug_raw_response = content.slice(0, 1000);
+        return result;
+      }
     } catch (err) {
       console.warn('[analyze] Groq', model, 'threw:', err instanceof Error ? err.message : err);
     }
