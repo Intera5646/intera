@@ -4,7 +4,11 @@ import { supabaseServer } from '../../../lib/supabase/server';
 import { parseFloorPlan } from '../../../lib/ai/floorPlanParser';
 import { buildFloorPlan3D } from '../../../lib/ai/floorPlan3D';
 import { generate } from '../../../lib/ai/adapter';
-import { generateDesignerText, buildGenerationPrompt } from '../../../lib/ai/groq';
+import {
+  buildDesignBrief,
+  buildFallbackPrompt,
+  formatReportText,
+} from '../../../lib/ai/groq';
 import { STYLE_PROMPTS, ROOM_PROMPTS, BUDGET_PROMPTS } from '../../../lib/data/zones_index';
 
 const defaultCeiling = Number(process.env.DEFAULT_CEILING_HEIGHT_MM ?? '2700');
@@ -134,27 +138,25 @@ export async function POST(req: NextRequest) {
 
     const generationId = generationRecord.data.id;
 
-    // Build enriched wishes string with personalization context
-    const personalizationParts: string[] = [];
-    if (residents) personalizationParts.push(`Проживает: ${residents}`);
-    if (hasPets) personalizationParts.push(`Домашние животные: ${hasPets}`);
-    if (needsWorkspace) personalizationParts.push(`Рабочее место: ${needsWorkspace}`);
-    if (lightingPreference) personalizationParts.push(`Освещение: ${lightingPreference}`);
-    if (dislikedColors) personalizationParts.push(`Нежелательные цвета: ${dislikedColors}`);
-    const enrichedWishes = [wishes, ...personalizationParts].filter(Boolean).join('. ');
-
     void runGeneration({
       generationId,
       projectId,
       session,
       roomType,
+      apartmentType: apartmentType || undefined,
+      uploadType,
       style,
       budget,
-      wishes: enrichedWishes,
+      wishes,
       ceilingHeight,
       planImageUrl,
       isAdmin,
       roomCount,
+      residents,
+      hasPets,
+      needsWorkspace,
+      lightingPreference,
+      dislikedColors,
     });
 
     return NextResponse.json({ success: true, generationId });
@@ -169,6 +171,8 @@ type RunGenerationParams = {
   projectId: string;
   session: { userId: string; role: string; phone: string; exp: number };
   roomType: string;
+  apartmentType?: string;
+  uploadType: string;
   style: string;
   budget: string;
   wishes: string;
@@ -176,6 +180,11 @@ type RunGenerationParams = {
   planImageUrl: string;
   isAdmin: boolean;
   roomCount: number;
+  residents: string | null;
+  hasPets: string | null;
+  needsWorkspace: string | null;
+  lightingPreference: string | null;
+  dislikedColors: string | null;
 };
 
 async function runGeneration(params: RunGenerationParams) {
@@ -196,11 +205,51 @@ async function runGeneration(params: RunGenerationParams) {
       });
     }
 
-    // Parse floor plan and build 3D depth map
+    // ── Stage A: Groq structured design brief ────────────────────────────────
+    let sdPrompt: string;
+    let sdNegativePrompt: string;
+    let designerText: object | null = null;
+    let reportText: string | null = null;
+    let colorPalette: string[] | null = null;
+
+    try {
+      const brief = await buildDesignBrief({
+        roomType: params.roomType,
+        style: params.style,
+        budget: params.budget,
+        ceilingHeight: params.ceilingHeight,
+        apartmentType: params.apartmentType,
+        uploadType: params.uploadType,
+        residents: params.residents,
+        hasPets: params.hasPets,
+        needsWorkspace: params.needsWorkspace,
+        lightingPreference: params.lightingPreference,
+        dislikedColors: params.dislikedColors,
+        wishes: params.wishes,
+      });
+
+      console.log('[runGeneration] Design brief:', JSON.stringify(brief).slice(0, 300));
+
+      sdPrompt = brief.sd_prompt ?? '';
+      sdNegativePrompt = brief.sd_negative_prompt ?? '';
+      designerText = brief;
+      colorPalette = Array.isArray(brief.color_palette) ? brief.color_palette : null;
+      reportText = brief.report_sections ? formatReportText(brief.report_sections) : null;
+    } catch (briefErr) {
+      console.warn('[runGeneration] buildDesignBrief failed, using fallback prompt:', briefErr);
+      const fallback = buildFallbackPrompt({
+        roomType: params.roomType,
+        style: params.style,
+        budget: params.budget,
+      });
+      sdPrompt = fallback.sdPrompt;
+      sdNegativePrompt = fallback.sdNegativePrompt;
+    }
+
+    // ── Depth map pipeline ───────────────────────────────────────────────────
     const parsed = await parseFloorPlan(params.planImageUrl);
     const depthMapResult = await buildFloorPlan3D(parsed, params.ceilingHeight);
 
-    // Upload depth map to Supabase Storage so Replicate can fetch it by URL
     const depthMapPath = `depth-maps/${params.generationId}.png`;
     await supabaseServer.storage
       .from('floor-plans')
@@ -215,49 +264,23 @@ async function runGeneration(params: RunGenerationParams) {
 
     const depthMapUrl = depthUrlData?.publicUrl ?? params.planImageUrl;
 
-    // Save depth map URL
     await supabaseServer
       .from('generations')
-      .update({ depth_map_url: depthMapUrl })
+      .update({ depth_map_url: depthMapUrl, sd_prompt: sdPrompt })
       .eq('id', params.generationId);
 
-    // Build AI prompt (Groq or fallback)
-    let prompt: string;
-    let negativePrompt: string;
-    try {
-      ({ prompt, negativePrompt } = await buildGenerationPrompt({
-        roomType: params.roomType,
-        style: params.style,
-        budget: params.budget,
-        wishes: params.wishes,
-      }));
-    } catch {
-      prompt = `photorealistic ${params.roomType} interior in ${params.style} style, ${params.budget} budget, natural lighting, elegant materials, 8k`;
-      negativePrompt =
-        'bad geometry, distorted walls, cartoon, watermark, text, people, faces, low quality';
-    }
-
-    // Run generation and designer text in parallel
-    const [renderUrls, designerText] = await Promise.all([
-      generate({
-        depthMapUrl,
-        prompt,
-        negativePrompt,
-        numOutputs: 4,
-        controlWeight,
-        roomType: params.roomType,
-        anonUuid: cryptoRandomUuid(),
-      }),
-      generateDesignerText({
-        roomType: params.roomType,
-        style: params.style,
-        budget: params.budget,
-        wishes: params.wishes,
-      }).catch((err) => {
-        console.warn('Groq designer text failed, continuing without it:', err?.message);
-        return null;
-      }),
-    ]);
+    // ── Stage B: Stable Diffusion render ─────────────────────────────────────
+    const renderUrls = await generate({
+      depthMapUrl,
+      prompt: sdPrompt,
+      negativePrompt: sdNegativePrompt,
+      numOutputs: 4,
+      controlWeight,
+      roomType: params.roomType,
+      anonUuid: cryptoRandomUuid(),
+      strength: 0.75,
+      guidanceScale: 12,
+    });
 
     const renderUrlStrings = (renderUrls ?? []).map((r: unknown) => {
       if (typeof r === 'string') return r;
@@ -269,12 +292,16 @@ async function runGeneration(params: RunGenerationParams) {
 
     const processingTime = Math.round((Date.now() - startTime) / 1000);
 
+    // ── Stage C + DB save ────────────────────────────────────────────────────
     await supabaseServer
       .from('generations')
       .update({
         status: 'done',
         render_urls: renderUrlStrings,
-        designer_text: designerText ?? null,
+        designer_text: designerText,
+        sd_prompt: sdPrompt,
+        report_text: reportText,
+        color_palette: colorPalette,
         processing_time: processingTime,
       })
       .eq('id', params.generationId);

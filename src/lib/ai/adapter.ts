@@ -8,6 +8,8 @@ export type GenerationParams = {
   controlWeight: number;
   roomType: string;
   anonUuid: string;
+  strength?: number;       // prompt_strength for img2img, default 0.75
+  guidanceScale?: number;  // cfg scale, default 12
 };
 
 export async function generate(params: GenerationParams): Promise<string[]> {
@@ -34,8 +36,8 @@ async function generateReplicate(params: GenerationParams): Promise<string[]> {
       image: params.depthMapUrl,
       prompt,
       negative_prompt: negativePrompt,
-      guidance_scale: 7.5,
-      prompt_strength: 0.7,
+      guidance_scale: params.guidanceScale ?? 12,
+      prompt_strength: params.strength ?? 0.75,
       num_inference_steps: 20,
       num_outputs: 1,
     },
