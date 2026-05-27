@@ -8,9 +8,16 @@ export type GenerationParams = {
   controlWeight: number;
   roomType: string;
   anonUuid: string;
-  strength?: number;       // prompt_strength for img2img, default 0.75
-  guidanceScale?: number;  // cfg scale, default 12
+  strength?: number;       // denoising strength, default 0.8
+  guidanceScale?: number;  // cfg scale, default 15
 };
+
+// Primary: ControlNet interior-design model — purpose-built for room renders
+const PRIMARY_MODEL = 'adirik/interior-design';
+
+// Fallback: standard img2img used previously
+const FALLBACK_MODEL =
+  'stability-ai/stable-diffusion-img2img:15a3689ee13b0d2616e98820eca31d4c3abcd36672df6afce5cb6feb1d66087d';
 
 export async function generate(params: GenerationParams): Promise<string[]> {
   const provider = (process.env.GENERATION_PROVIDER ?? 'replicate').trim();
@@ -27,26 +34,50 @@ async function generateReplicate(params: GenerationParams): Promise<string[]> {
   }
 
   const replicateClient = new Replicate({ auth: token });
+  const strength = params.strength ?? 0.8;
+  const guidanceScale = params.guidanceScale ?? 15;
 
-  const prompt = `${params.prompt} ${params.roomType} interior, photorealistic, cinematic lighting, soft textures`;
-  const negativePrompt = params.negativePrompt;
+  // Try primary model (adirik/interior-design)
+  try {
+    const output = await replicateClient.run(PRIMARY_MODEL as `${string}/${string}`, {
+      input: {
+        image: params.depthMapUrl,
+        prompt: params.prompt,
+        negative_prompt: params.negativePrompt,
+        guidance_scale: guidanceScale,
+        num_inference_steps: 50,
+        prompt_strength: strength,
+      },
+    });
 
-  const output = await replicateClient.run('stability-ai/stable-diffusion-img2img:15a3689ee13b0d2616e98820eca31d4c3abcd36672df6afce5cb6feb1d66087d', {
+    if (output) {
+      return extractUrls(output);
+    }
+  } catch (err) {
+    console.warn('[adapter] Primary model failed, falling back:', err instanceof Error ? err.message : err);
+  }
+
+  // Fallback to stability-ai img2img
+  const fallbackOutput = await replicateClient.run(FALLBACK_MODEL as `${string}/${string}:${string}`, {
     input: {
       image: params.depthMapUrl,
-      prompt,
-      negative_prompt: negativePrompt,
-      guidance_scale: params.guidanceScale ?? 12,
-      prompt_strength: params.strength ?? 0.75,
-      num_inference_steps: 20,
+      prompt: params.prompt,
+      negative_prompt: params.negativePrompt,
+      guidance_scale: guidanceScale,
+      prompt_strength: strength,
+      num_inference_steps: 30,
       num_outputs: 1,
     },
   });
 
-  if (!output) {
-    throw new Error('Generation provider returned no output.');
+  if (!fallbackOutput) {
+    throw new Error('Both primary and fallback generation providers returned no output.');
   }
 
+  return extractUrls(fallbackOutput);
+}
+
+function extractUrls(output: unknown): string[] {
   const items = Array.isArray(output) ? output : [output];
   return items.map((item: unknown) => {
     if (typeof item === 'string') return item;
@@ -54,5 +85,5 @@ async function generateReplicate(params: GenerationParams): Promise<string[]> {
     if (typeof obj?.url === 'function') return (obj.url as () => string)();
     if (typeof obj?.url === 'string') return obj.url;
     return String(item);
-  });
+  }).filter(Boolean);
 }

@@ -291,6 +291,7 @@ export default function NewProjectPage() {
   const [btiEntry, setBtiEntry] = useState<FileEntry | null>(null);
   const [btiAnalyzing, setBtiAnalyzing] = useState(false);
   const [btiRoomCount, setBtiRoomCount] = useState<number | null>(null);
+  const [btiRooms, setBtiRooms] = useState<string[]>([]);
   const [btiAnalysisError, setBtiAnalysisError] = useState(false);
   const [dragPhoto, setDragPhoto] = useState(false);
   const [dragBti, setDragBti] = useState(false);
@@ -416,6 +417,7 @@ export default function NewProjectPage() {
   const handleBtiFile = async (file: File) => {
     if (btiEntry) URL.revokeObjectURL(btiEntry.previewUrl);
     setBtiRoomCount(null);
+    setBtiRooms([]);
     setBtiAnalysisError(false);
     setBtiAnalyzing(false);
     const entry = makeEntry(file);
@@ -432,13 +434,20 @@ export default function NewProjectPage() {
         const r = await fetch('/api/analyze-floor-plan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageUrl: url }),
+          body: JSON.stringify({ image_url: url }),
         });
-        const d = await r.json();
-        setBtiRoomCount(d.success ? Math.max(1, d.roomCount) : 1);
-        if (!d.success) setBtiAnalysisError(true);
+        const d = await r.json() as { success: boolean; roomCount?: number; rooms?: string[] };
+        if (d.success && d.roomCount && d.roomCount > 0) {
+          setBtiRoomCount(Math.max(1, d.roomCount));
+          setBtiRooms(Array.isArray(d.rooms) ? d.rooms : []);
+        } else {
+          setBtiRoomCount(1);
+          setBtiRooms([]);
+          if (!d.success) setBtiAnalysisError(true);
+        }
       } catch {
         setBtiRoomCount(1);
+        setBtiRooms([]);
         setBtiAnalysisError(true);
       } finally {
         setBtiAnalyzing(false);
@@ -452,6 +461,7 @@ export default function NewProjectPage() {
     if (btiEntry) URL.revokeObjectURL(btiEntry.previewUrl);
     setBtiEntry(null);
     setBtiRoomCount(null);
+    setBtiRooms([]);
     setBtiAnalyzing(false);
     setBtiAnalysisError(false);
   };
@@ -665,13 +675,19 @@ export default function NewProjectPage() {
                   </div>
                   <div style={{ marginTop: 4, fontSize: 12, color: 'var(--muted)' }}>
                     {btiEntry.uploading && 'Загрузка...'}
+                    {btiEntry.uploading && 'Загрузка...'}
                     {!btiEntry.uploading && btiAnalyzing && '🔍 Анализируем план...'}
                     {!btiEntry.uploading && !btiAnalyzing && btiRoomCount !== null && (
-                      <span style={{ color: '#1B5E20' }}>✅ Обнаружено комнат: {btiRoomCount}</span>
+                      <span style={{ color: '#1B5E20' }}>
+                        ✅ Обнаружено {btiRoomCount} {btiRoomCount === 1 ? 'комната' : btiRoomCount < 5 ? 'комнаты' : 'комнат'}
+                        {btiRooms.length > 0 && (
+                          <span style={{ color: '#2E7D32' }}>: {btiRooms.join(', ')}</span>
+                        )}
+                      </span>
                     )}
                     {btiEntry.uploadError && <span style={{ color: '#B14A3F' }}>Ошибка загрузки</span>}
                     {!btiEntry.uploading && !btiAnalyzing && btiAnalysisError && btiRoomCount === null && (
-                      <span style={{ color: '#B14A3F' }}>Анализ не удался</span>
+                      <span style={{ color: '#B14A3F' }}>Анализ не удался — используем 1 комнату</span>
                     )}
                   </div>
                 </div>
