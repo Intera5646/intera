@@ -9,6 +9,15 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+const APARTMENT_TYPES = [
+  { id: 'studio', label: 'Студия' },
+  { id: '1k', label: '1-комнатная' },
+  { id: '2k', label: '2-комнатная' },
+  { id: '3k', label: '3-комнатная' },
+  { id: '4k_plus', label: '4+ комнатная' },
+  { id: 'house', label: 'Частный дом' },
+];
+
 const ROOM_TYPES = [
   { id: 'living_room', label: 'Гостиная' },
   { id: 'bedroom', label: 'Спальня' },
@@ -22,11 +31,15 @@ const STYLES = ['Скандинавский', 'Минимализм', 'Лофт'
 const BUDGETS = ['Эконом', 'Средний', 'Премиум'];
 const HEIGHTS = ['2.5 м', '2.7 м', '3.0 м', 'Указать вручную'];
 
+const TOTAL_STEPS = 5;
+
 export default function NewProjectPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
+  const [uploadType, setUploadType] = useState<'photo' | 'bti'>('photo');
   const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [apartmentType, setApartmentType] = useState('studio');
   const [roomType, setRoomType] = useState('living_room');
   const [style, setStyle] = useState('Скандинавский');
   const [budget, setBudget] = useState('Средний');
@@ -39,14 +52,15 @@ export default function NewProjectPage() {
 
   const tokenCost = useMemo(() => 1, []);
 
-  const uploadFloorPlan = async (file: File) => {
+  const uploadFile = async (file: File) => {
     setError(null);
     setUploading(true);
 
     try {
+      const folder = uploadType === 'bti' ? 'floor-plans' : 'floor-plans';
       const fileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
       const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('floor-plans')
+        .from(folder)
         .upload(fileName, file);
 
       if (uploadError || !uploadData) {
@@ -54,7 +68,7 @@ export default function NewProjectPage() {
       }
 
       const { data: publicData } = supabase.storage
-        .from('floor-plans')
+        .from(folder)
         .getPublicUrl(fileName);
 
       if (!publicData?.publicUrl) {
@@ -74,8 +88,16 @@ export default function NewProjectPage() {
     const selectedFile = event.target.files?.[0] ?? null;
     setFile(selectedFile);
     if (selectedFile) {
-      await uploadFloorPlan(selectedFile);
+      await uploadFile(selectedFile);
     }
+  };
+
+  const handleUploadTypeChange = (type: 'photo' | 'bti') => {
+    setUploadType(type);
+    // Reset upload state when switching modes
+    setFile(null);
+    setImageUrl(null);
+    setError(null);
   };
 
   const confirmGeneration = async () => {
@@ -84,7 +106,7 @@ export default function NewProjectPage() {
 
     try {
       if (!imageUrl) {
-        throw new Error('Сначала загрузите файл плана.');
+        throw new Error('Сначала загрузите файл.');
       }
 
       const ceilingHeightValue = height === 'Указать вручную' ? Number(customHeight) : Number(height.replace(' м', ''));
@@ -95,6 +117,8 @@ export default function NewProjectPage() {
         body: JSON.stringify({
           plan_image_url: imageUrl,
           room_type: roomType,
+          apartment_type: apartmentType,
+          upload_type: uploadType,
           style,
           budget,
           user_wishes: wishes,
@@ -131,11 +155,11 @@ export default function NewProjectPage() {
 
       <div style={{ position: 'absolute', top: 120, left: 22, right: 22, bottom: 20, overflow: 'auto' }}>
         <div style={{ marginBottom: 18, fontSize: 13, color: 'var(--muted)' }}>
-          Шаг {step} из 4 — создайте проект по плану БТИ или фото комнаты.
+          Шаг {step} из {TOTAL_STEPS} — создайте проект по плану БТИ или фото комнаты.
         </div>
 
         <div style={{ display: 'flex', gap: 10, marginBottom: 22 }}>
-          {[1, 2, 3, 4].map((value) => (
+          {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((value) => (
             <div
               key={value}
               style={{
@@ -148,23 +172,74 @@ export default function NewProjectPage() {
           ))}
         </div>
 
+        {/* Step 1 — Upload */}
         {step === 1 && (
           <section style={{ display: 'grid', gap: 18 }}>
             <div style={{ display: 'grid', gap: 10 }}>
               <div className="serif" style={{ fontSize: 24, fontStyle: 'italic', color: 'var(--ink)' }}>
-                Загрузите план или фото
+                {uploadType === 'photo' ? 'Загрузите фото комнаты' : 'Загрузите план БТИ'}
               </div>
               <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
-                Отправьте скан плана БТИ или фотографию комнаты. Чем лучше качество, тем аккуратнее будет визуализация.
+                {uploadType === 'photo'
+                  ? 'Отправьте фотографию комнаты. Чем лучше качество, тем аккуратнее будет визуализация.'
+                  : 'Отправьте скан плана БТИ или план застройщика. Комнаты будут определены автоматически.'}
               </div>
             </div>
 
+            {/* Upload type toggle */}
+            <div
+              style={{
+                display: 'flex',
+                gap: 0,
+                padding: 4,
+                background: 'rgba(34,30,26,0.06)',
+                borderRadius: 14,
+              }}
+            >
+              {(['photo', 'bti'] as const).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => handleUploadTypeChange(type)}
+                  style={{
+                    flex: 1,
+                    height: 40,
+                    borderRadius: 10,
+                    border: 'none',
+                    fontWeight: 600,
+                    fontSize: 13,
+                    background: uploadType === type ? 'var(--ink)' : 'transparent',
+                    color: uploadType === type ? 'var(--paper)' : 'var(--muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {type === 'photo' ? 'Фото комнаты' : 'План БТИ'}
+                </button>
+              ))}
+            </div>
+
+            {uploadType === 'bti' && (
+              <div
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: 14,
+                  background: 'rgba(34,30,26,0.04)',
+                  border: '1px solid var(--line)',
+                  fontSize: 13,
+                  color: 'var(--ink-2)',
+                  lineHeight: 1.5,
+                }}
+              >
+                📐 Комнаты будут определены автоматически по вашему плану.
+              </div>
+            )}
+
             <label
-              htmlFor="floor-plan"
+              htmlFor="upload-file"
               style={{
                 borderRadius: 20,
                 border: '1px dashed var(--line)',
-                minHeight: 220,
+                minHeight: 200,
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -178,16 +253,16 @@ export default function NewProjectPage() {
               <div style={{ fontSize: 54, lineHeight: 1 }}>&#x2B07;</div>
               <div style={{ fontWeight: 700, color: 'var(--ink)' }}>Выберите файл</div>
               <div style={{ fontSize: 12.5, color: 'var(--muted)', textAlign: 'center', maxWidth: 260 }}>
-                JPG, PNG, PDF — до 20 МБ
+                JPG, PNG{uploadType === 'bti' ? ', PDF' : ''} — до 20 МБ
               </div>
               {file ? (
                 <div style={{ marginTop: 6, fontSize: 13, color: 'var(--ink-2)' }}>{file.name}</div>
               ) : null}
             </label>
             <input
-              id="floor-plan"
+              id="upload-file"
               type="file"
-              accept="image/*,.pdf"
+              accept={uploadType === 'bti' ? 'image/*,.pdf' : 'image/*'}
               style={{ display: 'none' }}
               onChange={handleFileChange}
             />
@@ -199,7 +274,41 @@ export default function NewProjectPage() {
           </section>
         )}
 
+        {/* Step 2 — Apartment type */}
         {step === 2 && (
+          <section style={{ display: 'grid', gap: 18 }}>
+            <div>
+              <div className="serif" style={{ fontSize: 24, fontStyle: 'italic', color: 'var(--ink)' }}>
+                Тип квартиры
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 6, lineHeight: 1.6 }}>
+                Укажите тип жилья — это поможет AI подобрать правильную планировку и расстановку мебели.
+              </div>
+            </div>
+            <div style={{ display: 'grid', gap: 12 }}>
+              {APARTMENT_TYPES.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setApartmentType(item.id)}
+                  className="pill"
+                  style={{
+                    justifyContent: 'space-between',
+                    background: apartmentType === item.id ? 'var(--ink)' : 'var(--white)',
+                    color: apartmentType === item.id ? 'var(--paper)' : 'var(--ink)',
+                    border: apartmentType === item.id ? '1px solid transparent' : '1px solid var(--line)',
+                  }}
+                >
+                  <span>{item.label}</span>
+                  {apartmentType === item.id ? '✓' : null}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Step 3 — Room type */}
+        {step === 3 && (
           <section style={{ display: 'grid', gap: 18 }}>
             <div>
               <div className="serif" style={{ fontSize: 24, fontStyle: 'italic', color: 'var(--ink)' }}>
@@ -231,7 +340,8 @@ export default function NewProjectPage() {
           </section>
         )}
 
-        {step === 3 && (
+        {/* Step 4 — Style & budget */}
+        {step === 4 && (
           <section style={{ display: 'grid', gap: 18 }}>
             <div>
               <div className="serif" style={{ fontSize: 24, fontStyle: 'italic', color: 'var(--ink)' }}>
@@ -311,7 +421,8 @@ export default function NewProjectPage() {
           </section>
         )}
 
-        {step === 4 && (
+        {/* Step 5 — Ceiling height */}
+        {step === 5 && (
           <section style={{ display: 'grid', gap: 18 }}>
             <div>
               <div className="serif" style={{ fontSize: 24, fontStyle: 'italic', color: 'var(--ink)' }}>
@@ -387,7 +498,7 @@ export default function NewProjectPage() {
           className="btn btn--dark btn--block"
           style={{ flex: 1, height: 52 }}
           onClick={() => {
-            if (step < 4) {
+            if (step < TOTAL_STEPS) {
               setStep(step + 1);
             } else {
               confirmGeneration();
@@ -395,7 +506,7 @@ export default function NewProjectPage() {
           }}
           disabled={submitting || uploading || (step === 1 && !imageUrl)}
         >
-          {submitting ? 'Генерация...' : step < 4 ? 'Далее' : 'Сгенерировать'}
+          {submitting ? 'Генерация...' : step < TOTAL_STEPS ? 'Далее' : 'Сгенерировать'}
         </button>
       </div>
     </div>

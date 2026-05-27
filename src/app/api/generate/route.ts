@@ -38,6 +38,8 @@ export async function POST(req: NextRequest) {
     }
 
     const roomType = String(body.room_type ?? '').trim();
+    const apartmentType = String(body.apartment_type ?? '').trim();
+    const uploadType = String(body.upload_type ?? 'photo').trim();
     const style = String(body.style ?? '').trim();
     const budget = String(body.budget ?? '').trim();
     const ceilingHeight = Number(body.ceiling_height ?? defaultCeiling);
@@ -79,6 +81,8 @@ export async function POST(req: NextRequest) {
         user_id: session.userId,
         title: `${style} · ${roomType}`,
         room_type: roomType,
+        apartment_type: apartmentType || null,
+        upload_type: uploadType,
         style,
         budget_level: budget,
         status: 'processing',
