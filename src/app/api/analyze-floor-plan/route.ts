@@ -223,7 +223,8 @@ async function analyzeWithOpenRouter(imageUrl: string, apiKey: string): Promise<
           ],
         },
       ],
-      response_format: { type: 'json_object' },
+      // NOTE: response_format omitted — not all vision endpoints support it;
+      // the prompt instructs the model to return JSON only
       max_tokens: 1024,
       temperature: 0,
     }),
@@ -241,40 +242,56 @@ async function analyzeWithOpenRouter(imageUrl: string, apiKey: string): Promise<
   return parseAnalysisResponse(content);
 }
 
-// ── Groq LLaMA 3.2 90B Vision ────────────────────────────────────────────────
+// ── Groq vision models ────────────────────────────────────────────────────────
+// Try 90b first, fall back to 11b — neither supports response_format for vision
+
+const GROQ_VISION_MODELS = [
+  'llama-3.2-90b-vision-preview',
+  'llama-3.2-11b-vision-preview',
+] as const;
 
 async function analyzeWithGroq(imageUrl: string, apiKey: string): Promise<AnalysisResult | null> {
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'llama-3.2-90b-vision-preview',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: imageUrl } },
-            { type: 'text', text: USER_PROMPT },
-          ],
+  for (const model of GROQ_VISION_MODELS) {
+    try {
+      console.log('[analyze] Trying Groq model:', model);
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
         },
-      ],
-      response_format: { type: 'json_object' },
-      max_tokens: 1024,
-      temperature: 0,
-    }),
-  });
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'image_url', image_url: { url: imageUrl } },
+                { type: 'text', text: USER_PROMPT },
+              ],
+            },
+          ],
+          // NOTE: response_format NOT sent — Groq vision models return 400 with it
+          max_tokens: 1024,
+          temperature: 0,
+        }),
+      });
 
-  const responseText = await res.text();
-  console.log('[analyze] Groq HTTP status:', res.status);
+      const responseText = await res.text();
+      console.log('[analyze] Groq', model, 'HTTP status:', res.status);
 
-  if (!res.ok) {
-    throw new Error(`Groq HTTP ${res.status}: ${responseText.slice(0, 300)}`);
+      if (!res.ok) {
+        console.warn('[analyze] Groq', model, 'failed:', responseText.slice(0, 200));
+        continue; // try next model
+      }
+
+      const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
+      const content = data?.choices?.[0]?.message?.content ?? '';
+      const result = parseAnalysisResponse(content);
+      if (result) return result;
+    } catch (err) {
+      console.warn('[analyze] Groq', model, 'threw:', err instanceof Error ? err.message : err);
+    }
   }
-
-  const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
-  const content = data?.choices?.[0]?.message?.content ?? '';
-  return parseAnalysisResponse(content);
+  return null;
 }

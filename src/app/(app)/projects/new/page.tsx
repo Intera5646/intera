@@ -416,9 +416,11 @@ export default function NewProjectPage() {
   // ── BTI upload handler ────────────────────────────────────────────────────
 
   const handleBtiFile = async (file: File) => {
+    console.log('[BTI Upload] File selected:', file.name, file.type, file.size);
     if (btiEntry) URL.revokeObjectURL(btiEntry.previewUrl);
     setBtiRoomCount(null);
     setBtiRooms([]);
+    setBtiRoomsJson('');
     setBtiAnalysisError(false);
     setBtiAnalyzing(false);
     const entry = makeEntry(file);
@@ -427,10 +429,12 @@ export default function NewProjectPage() {
 
     try {
       const url = await uploadToStorage(file);
+      console.log('[BTI Upload] File uploaded to:', url);
       setBtiEntry((prev) => prev ? { ...prev, uploadedUrl: url, uploading: false } : null);
 
       // Immediately start floor-plan analysis
       setBtiAnalyzing(true);
+      console.log('[BTI Upload] Calling analyze API with image_url:', url);
       try {
         const r = await fetch('/api/analyze-floor-plan', {
           method: 'POST',
@@ -438,6 +442,7 @@ export default function NewProjectPage() {
           body: JSON.stringify({ image_url: url }),
         });
         const d = await r.json() as { success: boolean; roomCount?: number; rooms?: unknown[]; room_names?: string[] };
+        console.log('[BTI Upload] API response:', d);
         if (d.success && d.roomCount && d.roomCount > 0) {
           setBtiRoomCount(Math.max(1, d.roomCount));
           setBtiRooms(Array.isArray(d.room_names) ? d.room_names : []);
@@ -448,14 +453,16 @@ export default function NewProjectPage() {
           setBtiRoomsJson('');
           if (!d.success) setBtiAnalysisError(true);
         }
-      } catch {
+      } catch (err) {
+        console.error('[BTI Upload] Analyze API error:', err);
         setBtiRoomCount(1);
         setBtiRooms([]);
         setBtiAnalysisError(true);
       } finally {
         setBtiAnalyzing(false);
       }
-    } catch {
+    } catch (err) {
+      console.error('[BTI Upload] Upload error:', err);
       setBtiEntry((prev) => prev ? { ...prev, uploading: false, uploadError: true } : null);
     }
   };
