@@ -78,7 +78,7 @@ function AdminSidebar({ active = 'dashboard' }: { active?: string }) {
         })}
       </nav>
 
-      <div style={{ padding: '22px 22px 28px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+      <div style={{ padding: '22px 22px 28px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
             width: 42,
@@ -97,6 +97,27 @@ function AdminSidebar({ active = 'dashboard' }: { active?: string }) {
             <div style={{ fontSize: 12, color: 'rgba(245, 240, 232, 0.75)' }}>Управление системой</div>
           </div>
         </div>
+        <Link
+          href="/dashboard"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            padding: '9px 14px',
+            borderRadius: 20,
+            border: '1px solid rgba(245,240,232,0.2)',
+            color: 'rgba(245,240,232,0.75)',
+            textDecoration: 'none',
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: '0.03em',
+            transition: 'border-color 0.15s, color 0.15s',
+          }}
+        >
+          <span style={{ fontSize: 10 }}>←</span>
+          Режим пользователя
+        </Link>
       </div>
     </aside>
   );

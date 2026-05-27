@@ -19,7 +19,7 @@ export default async function DashboardPage() {
     const [profileResult, projectsResult] = await Promise.all([
       supabaseServer
         .from('profiles')
-        .select('token_balance, name')
+        .select('token_balance, name, role')
         .eq('id', userId)
         .single(),
       supabaseServer
@@ -32,11 +32,13 @@ export default async function DashboardPage() {
 
     let tokenBalance = 0
     let userName = ''
+    let userRole = 'user'
     if (profileResult.error) {
       console.error('[DashboardPage] Profile query error:', profileResult.error.message)
     } else if (profileResult.data) {
       tokenBalance = profileResult.data.token_balance ?? 0
-      userName = (profileResult.data as { token_balance: number; name?: string | null }).name ?? ''
+      userName = (profileResult.data as { token_balance: number; name?: string | null; role?: string | null }).name ?? ''
+      userRole = (profileResult.data as { token_balance: number; name?: string | null; role?: string | null }).role ?? 'user'
       console.log('[DashboardPage] Token balance:', tokenBalance)
     }
 
@@ -62,6 +64,7 @@ export default async function DashboardPage() {
         initialProjects={projects}
         userName={userName}
         userEmail={userEmail}
+        userRole={userRole}
       />
     )
   } catch (error) {
