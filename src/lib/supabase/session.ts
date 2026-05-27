@@ -1,36 +1,26 @@
-import { cookies } from 'next/headers'
+import { cookies } from 'next/headers';
+import { verifySessionToken } from '../auth';
 
 export async function getSessionUserId(): Promise<string | null> {
   try {
-    const cookieStore = await cookies()
-    const authToken = cookieStore.get('sb-auth-token')?.value
-    
-    if (!authToken) {
-      console.log('[session.ts] No auth token in cookies')
-      return null
+    const cookieStore = await cookies();
+    const sessionValue = cookieStore.get('intera_session')?.value ?? null;
+
+    if (!sessionValue) {
+      console.log('[session.ts] No intera_session cookie found');
+      return null;
     }
 
-    // Parse JWT to extract user ID
-    try {
-      const parts = authToken.split('.')
-      if (parts.length !== 3) {
-        console.log('[session.ts] Invalid JWT format')
-        return null
-      }
-
-      const payload = JSON.parse(
-        Buffer.from(parts[1], 'base64').toString('utf8')
-      )
-      
-      const userId = payload.sub
-      console.log('[session.ts] Extracted userId:', userId)
-      return userId || null
-    } catch (decodeError) {
-      console.log('[session.ts] Failed to decode JWT:', decodeError)
-      return null
+    const session = verifySessionToken(sessionValue);
+    if (!session) {
+      console.log('[session.ts] Invalid or expired session token');
+      return null;
     }
+
+    console.log('[session.ts] Session valid for userId:', session.userId);
+    return session.userId;
   } catch (error) {
-    console.log('[session.ts] Cookie read failed:', error)
-    return null
+    console.log('[session.ts] Session read failed:', error);
+    return null;
   }
 }

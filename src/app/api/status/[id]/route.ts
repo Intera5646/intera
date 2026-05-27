@@ -10,7 +10,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { data, error } = await supabaseServer
     .from('generations')
-    .select('status, render_urls, error_message')
+    .select('status, render_urls, error_message, designer_text')
     .eq('id', generationId)
     .single();
 
@@ -25,5 +25,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     progress,
     render_urls: data.render_urls ?? [],
     error_message: data.error_message ?? null,
+    designer_text: data.designer_text ?? null,
   });
 }

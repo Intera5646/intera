@@ -112,9 +112,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     redirect('/dashboard');
   }
 
+  const pathname = headersList.get('x-pathname') ?? headersList.get('referer') ?? '';
+  let active = 'dashboard';
+  if (pathname.includes('/admin/users')) active = 'users';
+  else if (pathname.includes('/admin/generations')) active = 'generations';
+  else if (pathname.includes('/admin/tokens')) active = 'tokens';
+  else if (pathname.includes('/admin/finance')) active = 'finance';
+  else if (pathname.includes('/admin/settings')) active = 'settings';
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)' }}>
-      <AdminSidebar active="dashboard" />
+      <AdminSidebar active={active} />
       <main style={{ flex: 1, padding: '24px 28px', minHeight: '100vh' }}>
         {children}
       </main>

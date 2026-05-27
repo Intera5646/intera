@@ -30,9 +30,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: { code: 'UPLOAD_FAILED', message: 'Не удалось сохранить файл на хранилище.' } }, { status: 500 });
   }
 
-  const { data: publicData, error: publicError } = await supabaseAdmin.storage.from('floor-plans').getPublicUrl(path);
-  if (publicError || !publicData?.publicUrl) {
-    console.error('Supabase getPublicUrl error:', publicError);
+  const { data: publicData } = supabaseAdmin.storage.from('floor-plans').getPublicUrl(path);
+  if (!publicData?.publicUrl) {
     return NextResponse.json({ success: false, error: { code: 'UPLOAD_FAILED', message: 'Не удалось получить URL файла.' } }, { status: 500 });
   }
 

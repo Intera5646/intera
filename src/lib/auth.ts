@@ -2,10 +2,11 @@ import crypto from 'crypto';
 import { supabaseServer } from './supabase/server';
 
 const SESSION_COOKIE_NAME = 'intera_session';
-const SESSION_SECRET = process.env.NEXTAUTH_SECRET || process.env.SUPABASE_SERVICE_KEY;
-if (!SESSION_SECRET) {
+const _rawSecret = process.env.NEXTAUTH_SECRET || process.env.SUPABASE_SERVICE_KEY;
+if (!_rawSecret) {
   throw new Error('Missing NEXTAUTH_SECRET or SUPABASE_SERVICE_KEY environment variable.');
 }
+const SESSION_SECRET: string = _rawSecret;
 
 export interface SessionPayload {
   userId: string;

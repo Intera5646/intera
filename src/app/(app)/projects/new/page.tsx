@@ -53,12 +53,12 @@ export default function NewProjectPage() {
         throw uploadError || new Error('Ошибка загрузки файла.');
       }
 
-      const { data: publicData, error: publicUrlError } = supabase.storage
+      const { data: publicData } = supabase.storage
         .from('floor-plans')
         .getPublicUrl(fileName);
 
-      if (publicUrlError || !publicData?.publicUrl) {
-        throw publicUrlError || new Error('Не удалось получить URL файла.');
+      if (!publicData?.publicUrl) {
+        throw new Error('Не удалось получить URL файла.');
       }
 
       setImageUrl(publicData.publicUrl);
