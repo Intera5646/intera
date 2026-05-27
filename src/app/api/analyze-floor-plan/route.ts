@@ -124,19 +124,32 @@ export async function POST(req: NextRequest) {
 
 // ── Prompt ────────────────────────────────────────────────────────────────────
 
-const USER_PROMPT = `Look at this floor plan image carefully. Your task is to count and identify ALL rooms that need interior design visualization.
+const USER_PROMPT = `This is a Russian apartment floor plan (BTИ/БТИ). Analyze the WALL GEOMETRY and ENCLOSED SPACES to count and identify every room. Do NOT rely on text labels — Russian BTИ plans often have no room labels, only walls, dimensions, and symbols.
 
-IMPORTANT: Count each room separately. Examples:
-- A 2-bedroom apartment typically has: living room + 2 bedrooms + kitchen + bathroom + toilet = 6 rooms
-- A studio apartment has: main room + kitchen area + bathroom = 3 rooms
-- A 3-bedroom apartment typically has: living room + 3 bedrooms + kitchen + 2 bathrooms = 7 rooms
+IDENTIFY ROOMS BY GEOMETRY AND SYMBOLS:
+- Largest enclosed space with exterior windows → Гостиная (living room) or Спальня (bedroom)
+- Space with sink/stove symbol (small rectangle or circle near wall) → Кухня (kitchen)
+- Space with bathtub symbol (rounded rectangle) → Ванная комната (bathroom)
+- Small space (~2-4 m²) with toilet symbol (small oval/circle) → Туалет (toilet)
+- Narrow connecting space linking entrance to other rooms → Коридор / Прихожая (hallway)
+- Space with exterior wall but no windows, thin floor slab shown → Балкон / Лоджия (balcony)
 
-DO INCLUDE: living rooms, bedrooms, kitchens, dining rooms, bathrooms, toilets, home offices
-DO NOT INCLUDE: hallways, corridors, entrance halls, elevator shafts, stairwells, storage closets, utility rooms
+COUNTING RULES:
+- Each walled-off enclosed space = separate room
+- If bathtub and toilet are in the SAME enclosed space → Санузел совмещённый (combined bathroom), count as 1
+- If in separate adjacent spaces → count as 2 (Ванная + Туалет)
+- Typical 1-room apartment: 3-4 spaces (living/kitchen + bathroom + toilet + hallway)
+- Typical 2-room apartment: 5-6 spaces
+- Typical 3-room apartment: 6-8 spaces
+
+INCLUDE: living rooms, bedrooms, kitchens, bathrooms, toilets, hallways, balconies, home offices
+DO NOT INCLUDE: elevator shafts, stairwells, external walls only, structural columns
+
+Examine the floor plan carefully — count every distinct enclosed polygon formed by walls.
 
 For each room provide in Russian:
 - id: sequential (R1, R2, R3...)
-- name: Гостиная / Спальня / Кухня / Ванная / Туалет / Кабинет / Детская / etc.
+- name: Гостиная / Спальня / Кухня / Ванная / Туалет / Санузел совмещённый / Коридор / Прихожая / Балкон / Кабинет / Детская
 - approximate_size: "large" (>20m²) or "medium" (10-20m²) or "small" (<10m²)
 - windows: "yes" or "no"
 - natural_light: "high" or "medium" or "low"
