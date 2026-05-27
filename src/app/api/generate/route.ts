@@ -45,6 +45,14 @@ export async function POST(req: NextRequest) {
     const ceilingHeight = Number(body.ceiling_height ?? defaultCeiling);
     const planImageUrl = String(body.plan_image_url ?? '').trim();
     const wishes = String(body.user_wishes ?? '').trim();
+    const roomCount = Math.max(1, Number(body.room_count ?? 1));
+
+    // Personalization fields (all optional)
+    const residents = String(body.residents ?? '').trim() || null;
+    const hasPets = String(body.has_pets ?? '').trim() || null;
+    const needsWorkspace = String(body.needs_workspace ?? '').trim() || null;
+    const lightingPreference = String(body.lighting_preference ?? '').trim() || null;
+    const dislikedColors = String(body.disliked_colors ?? '').trim() || null;
 
     if (!roomType || !style || !budget || !planImageUrl) {
       return NextResponse.json(
@@ -68,7 +76,7 @@ export async function POST(req: NextRequest) {
 
     const isAdmin = balanceResult.data.role === 'admin';
     const balance = isAdmin ? Infinity : (balanceResult.data.token_balance ?? 0);
-    if (!isAdmin && balance < 1) {
+    if (!isAdmin && balance < roomCount) {
       return NextResponse.json(
         { success: false, error: { code: 'INSUFFICIENT_TOKENS', message: 'Недостаточно токенов.' } },
         { status: 400 }
@@ -86,6 +94,11 @@ export async function POST(req: NextRequest) {
         style,
         budget_level: budget,
         status: 'processing',
+        residents,
+        has_pets: hasPets,
+        needs_workspace: needsWorkspace,
+        lighting_preference: lightingPreference,
+        disliked_colors: dislikedColors,
         created_at: new Date().toISOString(),
       })
       .select('id')
@@ -121,6 +134,15 @@ export async function POST(req: NextRequest) {
 
     const generationId = generationRecord.data.id;
 
+    // Build enriched wishes string with personalization context
+    const personalizationParts: string[] = [];
+    if (residents) personalizationParts.push(`Проживает: ${residents}`);
+    if (hasPets) personalizationParts.push(`Домашние животные: ${hasPets}`);
+    if (needsWorkspace) personalizationParts.push(`Рабочее место: ${needsWorkspace}`);
+    if (lightingPreference) personalizationParts.push(`Освещение: ${lightingPreference}`);
+    if (dislikedColors) personalizationParts.push(`Нежелательные цвета: ${dislikedColors}`);
+    const enrichedWishes = [wishes, ...personalizationParts].filter(Boolean).join('. ');
+
     void runGeneration({
       generationId,
       projectId,
@@ -128,10 +150,11 @@ export async function POST(req: NextRequest) {
       roomType,
       style,
       budget,
-      wishes,
+      wishes: enrichedWishes,
       ceilingHeight,
       planImageUrl,
       isAdmin,
+      roomCount,
     });
 
     return NextResponse.json({ success: true, generationId });
@@ -152,6 +175,7 @@ type RunGenerationParams = {
   ceilingHeight: number;
   planImageUrl: string;
   isAdmin: boolean;
+  roomCount: number;
 };
 
 async function runGeneration(params: RunGenerationParams) {
@@ -163,11 +187,11 @@ async function runGeneration(params: RunGenerationParams) {
       .update({ status: 'processing' })
       .eq('id', params.generationId);
 
-    // Spend token before starting (skip for admin)
+    // Spend tokens before starting (skip for admin)
     if (!params.isAdmin) {
       await supabaseServer.rpc('spend_user_tokens', {
         p_user_id: params.session.userId,
-        p_amount: 1,
+        p_amount: params.roomCount,
         p_project_id: params.projectId,
       });
     }
@@ -263,12 +287,12 @@ async function runGeneration(params: RunGenerationParams) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('runGeneration failed:', errorMessage);
 
-    // Refund token on failure (skip for admin)
+    // Refund tokens on failure (skip for admin)
     if (!params.isAdmin) {
       try {
         await supabaseServer.from('token_transactions').insert({
           user_id: params.session.userId,
-          amount: 1,
+          amount: params.roomCount,
           type: 'refund',
           reason: 'generation_failed',
           project_id: params.projectId,
@@ -276,7 +300,7 @@ async function runGeneration(params: RunGenerationParams) {
         });
         await supabaseServer.rpc('spend_user_tokens', {
           p_user_id: params.session.userId,
-          p_amount: -1,
+          p_amount: -params.roomCount,
           p_project_id: params.projectId,
         });
       } catch {
