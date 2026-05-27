@@ -1,26 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseSessionCookie, verifySessionToken } from '../../../lib/auth';
 import { supabaseServer } from '../../../lib/supabase/server';
-import { parseFloorPlan } from '../../../lib/ai/floorPlanParser';
-import { buildFloorPlan3D } from '../../../lib/ai/floorPlan3D';
-import { generate } from '../../../lib/ai/adapter';
+import {
+  generate,
+  generateDraftRender,
+  generateDepthMap,
+} from '../../../lib/ai/adapter';
 import {
   buildDesignBrief,
   buildFallbackPrompt,
+  buildRoomPrompts,
   formatReportText,
+  type DesignBrief,
+  type RoomInfo,
+  type RoomPrompt,
 } from '../../../lib/ai/groq';
 import { STYLE_PROMPTS, ROOM_PROMPTS, BUDGET_PROMPTS } from '../../../lib/data/zones_index';
 
+// suppress unused-import warning
+void STYLE_PROMPTS; void ROOM_PROMPTS; void BUDGET_PROMPTS;
+
 const defaultCeiling = Number(process.env.DEFAULT_CEILING_HEIGHT_MM ?? '2700');
 const controlWeight = Number(process.env.CONTROLNET_WEIGHT ?? '1.2');
+void controlWeight; // used by adapter internally
 
-// suppress unused-import warning — these are available for future use
-void STYLE_PROMPTS;
-void ROOM_PROMPTS;
-void BUDGET_PROMPTS;
+const ANGLE_VARIANTS = [
+  'front view, main perspective',
+  'side view, alternative angle',
+  'detail view, close up on furniture arrangement',
+  'wide angle, full room overview',
+] as const;
+
+// ── POST handler ──────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  console.log('Generate request received');
+  console.log('[generate] Request received');
 
   try {
     const body = await req.json();
@@ -41,22 +55,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const roomType = String(body.room_type ?? '').trim();
-    const apartmentType = String(body.apartment_type ?? '').trim();
-    const uploadType = String(body.upload_type ?? 'photo').trim();
-    const style = String(body.style ?? '').trim();
-    const budget = String(body.budget ?? '').trim();
-    const ceilingHeight = Number(body.ceiling_height ?? defaultCeiling);
-    const planImageUrl = String(body.plan_image_url ?? '').trim();
-    const wishes = String(body.user_wishes ?? '').trim();
-    const roomCount = Math.max(1, Number(body.room_count ?? 1));
+    const roomType        = String(body.room_type ?? '').trim();
+    const apartmentType   = String(body.apartment_type ?? '').trim();
+    const uploadType      = String(body.upload_type ?? 'photo').trim();
+    const style           = String(body.style ?? '').trim();
+    const budget          = String(body.budget ?? '').trim();
+    const ceilingHeight   = Number(body.ceiling_height ?? defaultCeiling);
+    const planImageUrl    = String(body.plan_image_url ?? '').trim();
+    const wishes          = String(body.user_wishes ?? '').trim();
+    const roomCount       = Math.max(1, Number(body.room_count ?? 1));
+    const detectedRoomsJson = String(body.detected_rooms_json ?? '').trim() || null;
 
-    // Personalization fields (all optional)
-    const residents = String(body.residents ?? '').trim() || null;
-    const hasPets = String(body.has_pets ?? '').trim() || null;
-    const needsWorkspace = String(body.needs_workspace ?? '').trim() || null;
-    const lightingPreference = String(body.lighting_preference ?? '').trim() || null;
-    const dislikedColors = String(body.disliked_colors ?? '').trim() || null;
+    const residents           = String(body.residents ?? '').trim() || null;
+    const hasPets             = String(body.has_pets ?? '').trim() || null;
+    const needsWorkspace      = String(body.needs_workspace ?? '').trim() || null;
+    const lightingPreference  = String(body.lighting_preference ?? '').trim() || null;
+    const dislikedColors      = String(body.disliked_colors ?? '').trim() || null;
 
     if (!roomType || !style || !budget || !planImageUrl) {
       return NextResponse.json(
@@ -87,6 +101,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Create project
     const projectRecord = await supabaseServer
       .from('projects')
       .insert({
@@ -103,6 +118,8 @@ export async function POST(req: NextRequest) {
         needs_workspace: needsWorkspace,
         lighting_preference: lightingPreference,
         disliked_colors: dislikedColors,
+        detected_rooms_json: detectedRoomsJson,
+        room_count: roomCount,
         created_at: new Date().toISOString(),
       })
       .select('id')
@@ -117,11 +134,14 @@ export async function POST(req: NextRequest) {
 
     const projectId = projectRecord.data.id;
 
+    // Create master generation record (used for navigation + overall status)
     const generationRecord = await supabaseServer
       .from('generations')
       .insert({
         project_id: projectId,
         status: 'pending',
+        room_name: uploadType === 'bti' ? 'apartment' : roomType,
+        room_index: uploadType === 'bti' ? -1 : 0,
         prompt_used: `${style} ${budget} ${roomType}`,
         budget_range: { budget, currency: 'RUB' },
         created_at: new Date().toISOString(),
@@ -152,6 +172,7 @@ export async function POST(req: NextRequest) {
       planImageUrl,
       isAdmin,
       roomCount,
+      detectedRoomsJson,
       residents,
       hasPets,
       needsWorkspace,
@@ -159,17 +180,21 @@ export async function POST(req: NextRequest) {
       dislikedColors,
     });
 
-    return NextResponse.json({ success: true, generationId });
+    return NextResponse.json({ success: true, generationId, projectId });
   } catch (error) {
-    console.error('Generate error:', error);
+    console.error('[generate] Unexpected error:', error);
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type Session = { userId: string; role: string; phone: string; exp: number };
+
 type RunGenerationParams = {
   generationId: string;
   projectId: string;
-  session: { userId: string; role: string; phone: string; exp: number };
+  session: Session;
   roomType: string;
   apartmentType?: string;
   uploadType: string;
@@ -180,6 +205,7 @@ type RunGenerationParams = {
   planImageUrl: string;
   isAdmin: boolean;
   roomCount: number;
+  detectedRoomsJson: string | null;
   residents: string | null;
   hasPets: string | null;
   needsWorkspace: string | null;
@@ -187,8 +213,11 @@ type RunGenerationParams = {
   dislikedColors: string | null;
 };
 
+// ── Main generation dispatcher ────────────────────────────────────────────────
+
 async function runGeneration(params: RunGenerationParams) {
   const startTime = Date.now();
+  console.log(`[runGeneration] Starting — uploadType: ${params.uploadType}, rooms: ${params.roomCount}`);
 
   try {
     await supabaseServer
@@ -196,7 +225,7 @@ async function runGeneration(params: RunGenerationParams) {
       .update({ status: 'processing' })
       .eq('id', params.generationId);
 
-    // Spend tokens before starting (skip for admin)
+    // Spend tokens upfront (all rooms atomically)
     if (!params.isAdmin) {
       await supabaseServer.rpc('spend_user_tokens', {
         p_user_id: params.session.userId,
@@ -205,15 +234,13 @@ async function runGeneration(params: RunGenerationParams) {
       });
     }
 
-    // ── Stage A: Groq structured design brief ────────────────────────────────
+    // Stage A: Global design brief from Groq
+    let brief: DesignBrief | null = null;
     let sdPrompt: string;
     let sdNegativePrompt: string;
-    let designerText: object | null = null;
-    let reportText: string | null = null;
-    let colorPalette: string[] | null = null;
 
     try {
-      const brief = await buildDesignBrief({
+      brief = await buildDesignBrief({
         roomType: params.roomType,
         style: params.style,
         budget: params.budget,
@@ -227,112 +254,27 @@ async function runGeneration(params: RunGenerationParams) {
         dislikedColors: params.dislikedColors,
         wishes: params.wishes,
       });
-
-      console.log('[runGeneration] Design brief:', JSON.stringify(brief).slice(0, 300));
-
       sdPrompt = brief.sd_prompt ?? '';
       sdNegativePrompt = brief.sd_negative_prompt ?? '';
-      designerText = brief;
-      colorPalette = Array.isArray(brief.color_palette) ? brief.color_palette : null;
-      reportText = brief.report_sections ? formatReportText(brief.report_sections) : null;
+      console.log('[runGeneration] Brief ready, sd_prompt length:', sdPrompt.length);
     } catch (briefErr) {
-      console.warn('[runGeneration] buildDesignBrief failed, using fallback prompt:', briefErr);
-      const fallback = buildFallbackPrompt({
-        roomType: params.roomType,
-        style: params.style,
-        budget: params.budget,
-      });
+      console.warn('[runGeneration] buildDesignBrief failed, using fallback:', briefErr);
+      const fallback = buildFallbackPrompt({ roomType: params.roomType, style: params.style, budget: params.budget });
       sdPrompt = fallback.sdPrompt;
       sdNegativePrompt = fallback.sdNegativePrompt;
     }
 
-    // ── Depth map pipeline ───────────────────────────────────────────────────
-    const parsed = await parseFloorPlan(params.planImageUrl);
-    const depthMapResult = await buildFloorPlan3D(parsed, params.ceilingHeight);
-
-    const depthMapPath = `depth-maps/${params.generationId}.png`;
-    await supabaseServer.storage
-      .from('floor-plans')
-      .upload(depthMapPath, depthMapResult.depthMapBuffer, {
-        contentType: 'image/png',
-        upsert: true,
-      });
-
-    const { data: depthUrlData } = supabaseServer.storage
-      .from('floor-plans')
-      .getPublicUrl(depthMapPath);
-
-    const depthMapUrl = depthUrlData?.publicUrl ?? params.planImageUrl;
-
-    await supabaseServer
-      .from('generations')
-      .update({ depth_map_url: depthMapUrl, sd_prompt: sdPrompt })
-      .eq('id', params.generationId);
-
-    // ── Stage B: Stable Diffusion render ─────────────────────────────────────
-    const renderUrls = await generate({
-      depthMapUrl,
-      prompt: sdPrompt,
-      negativePrompt: sdNegativePrompt,
-      numOutputs: 4,
-      controlWeight,
-      roomType: params.roomType,
-      anonUuid: cryptoRandomUuid(),
-      strength: 0.75,
-      guidanceScale: 12,
-    });
-
-    const renderUrlStrings = (renderUrls ?? []).map((r: unknown) => {
-      if (typeof r === 'string') return r;
-      const obj = r as Record<string, unknown>;
-      if (typeof obj?.url === 'function') return (obj.url as () => string)();
-      if (typeof obj?.url === 'string') return obj.url;
-      return String(r);
-    }).filter(Boolean);
-
-    const processingTime = Math.round((Date.now() - startTime) / 1000);
-
-    // ── Stage C + DB save ────────────────────────────────────────────────────
-    await supabaseServer
-      .from('generations')
-      .update({
-        status: 'done',
-        render_urls: renderUrlStrings,
-        designer_text: designerText,
-        sd_prompt: sdPrompt,
-        report_text: reportText,
-        color_palette: colorPalette,
-        processing_time: processingTime,
-      })
-      .eq('id', params.generationId);
-
-    await supabaseServer
-      .from('projects')
-      .update({ status: 'done' })
-      .eq('id', params.projectId);
+    if (params.uploadType === 'bti' || params.uploadType === 'combined') {
+      await runBtiPipeline({ params, brief, sdPrompt, sdNegativePrompt, startTime });
+    } else {
+      await runPhotoPipeline({ params, brief, sdPrompt, sdNegativePrompt, startTime });
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('runGeneration failed:', errorMessage);
+    console.error('[runGeneration] Failed:', errorMessage);
 
-    // Refund tokens on failure (skip for admin)
     if (!params.isAdmin) {
-      try {
-        await supabaseServer.from('token_transactions').insert({
-          user_id: params.session.userId,
-          amount: params.roomCount,
-          type: 'refund',
-          reason: 'generation_failed',
-          project_id: params.projectId,
-          created_at: new Date().toISOString(),
-        });
-        await supabaseServer.rpc('spend_user_tokens', {
-          p_user_id: params.session.userId,
-          p_amount: -params.roomCount,
-          p_project_id: params.projectId,
-        });
-      } catch {
-        // best effort — don't fail the error handler
-      }
+      await refundTokens(params.session.userId, params.roomCount, params.projectId);
     }
 
     await supabaseServer
@@ -344,6 +286,292 @@ async function runGeneration(params: RunGenerationParams) {
       .from('projects')
       .update({ status: 'error' })
       .eq('id', params.projectId);
+  }
+}
+
+// ── BTI 4-step pipeline ───────────────────────────────────────────────────────
+
+async function runBtiPipeline(ctx: {
+  params: RunGenerationParams;
+  brief: DesignBrief | null;
+  sdPrompt: string;
+  sdNegativePrompt: string;
+  startTime: number;
+}) {
+  const { params, brief, sdPrompt, sdNegativePrompt, startTime } = ctx;
+
+  // Parse detected rooms
+  let rooms: RoomInfo[] = [];
+  if (params.detectedRoomsJson) {
+    try {
+      const parsed = JSON.parse(params.detectedRoomsJson);
+      if (Array.isArray(parsed)) rooms = parsed as RoomInfo[];
+    } catch (e) {
+      console.warn('[BTI] Failed to parse detectedRoomsJson:', e);
+    }
+  }
+  if (rooms.length === 0) {
+    rooms = [{
+      id: 'R1', name: params.roomType || 'Комната',
+      approximate_size: 'medium', windows: 'yes', natural_light: 'medium', connected_to: [],
+    }];
+  }
+  console.log(`[BTI] Processing ${rooms.length} rooms:`, rooms.map(r => r.name).join(', '));
+
+  // Build per-room prompts
+  let roomPrompts: RoomPrompt[] = [];
+  if (brief) {
+    try {
+      roomPrompts = await buildRoomPrompts({
+        rooms,
+        style: params.style,
+        budget: params.budget,
+        concept: brief.concept ?? '',
+      });
+      console.log('[BTI] Room prompts built:', roomPrompts.length);
+    } catch (rpe) {
+      console.warn('[BTI] buildRoomPrompts failed, will use global prompt per room:', rpe);
+    }
+  }
+
+  // Process all rooms in parallel
+  const results = await Promise.allSettled(
+    rooms.map((room, idx) => {
+      const rp = roomPrompts[idx];
+      return runRoomPipeline({
+        room,
+        roomIndex: idx,
+        projectId: params.projectId,
+        style: params.style,
+        apartmentType: params.apartmentType,
+        planImageUrl: params.planImageUrl,
+        sdPromptForRoom: rp?.sd_prompt ?? `${sdPrompt}, ${room.name}`,
+        sdNegForRoom: rp?.sd_negative_prompt ?? sdNegativePrompt,
+        reportForRoom: rp?.report_text ?? null,
+        colorPalette: brief?.color_palette ?? null,
+      });
+    })
+  );
+
+  const successCount = results.filter(r => r.status === 'fulfilled').length;
+  const failedCount = rooms.length - successCount;
+  console.log(`[BTI] Done: ${successCount} succeeded, ${failedCount} failed`);
+
+  // Partial refund for failed rooms
+  if (!params.isAdmin && failedCount > 0) {
+    await refundTokens(params.session.userId, failedCount, params.projectId);
+  }
+
+  // Collect a sample of successful render URLs for the master record
+  const sampleUrls = results
+    .filter((r): r is PromiseFulfilledResult<string[]> => r.status === 'fulfilled')
+    .flatMap(r => r.value)
+    .slice(0, 4);
+
+  const processingTime = Math.round((Date.now() - startTime) / 1000);
+  const reportText = brief ? formatReportText(brief.report_sections) : null;
+
+  await supabaseServer.from('generations').update({
+    status: successCount === 0 ? 'failed' : 'done',
+    render_urls: sampleUrls,
+    image_urls: sampleUrls,
+    designer_text: brief,
+    sd_prompt: sdPrompt,
+    report_text: reportText,
+    color_palette: brief?.color_palette ?? null,
+    processing_time: processingTime,
+    ...(successCount === 0 ? { error_message: 'All rooms failed to generate' } : {}),
+  }).eq('id', params.generationId);
+
+  await supabaseServer.from('projects').update({
+    status: successCount === 0 ? 'error' : 'done',
+  }).eq('id', params.projectId);
+}
+
+// ── Single room pipeline (Steps 2–4) ─────────────────────────────────────────
+
+async function runRoomPipeline(opts: {
+  room: RoomInfo;
+  roomIndex: number;
+  projectId: string;
+  style: string;
+  apartmentType?: string;
+  planImageUrl: string;
+  sdPromptForRoom: string;
+  sdNegForRoom: string;
+  reportForRoom: string | null;
+  colorPalette: string[] | null;
+}): Promise<string[]> {
+  const { room } = opts;
+  console.log(`[room:${room.name}] Starting pipeline`);
+
+  // Create per-room generation record
+  const genRecord = await supabaseServer.from('generations').insert({
+    project_id: opts.projectId,
+    status: 'processing',
+    room_name: room.name,
+    room_index: opts.roomIndex,
+    sd_prompt: opts.sdPromptForRoom,
+    report_text: opts.reportForRoom,
+    color_palette: opts.colorPalette,
+    created_at: new Date().toISOString(),
+  }).select('id').single();
+
+  const roomGenId = genRecord.data?.id ?? null;
+
+  // Step 2: Draft render (txt2img — empty room, no furniture)
+  console.log(`[room:${room.name}] Step 2: draft render`);
+  let draftRenderUrl: string;
+  try {
+    draftRenderUrl = await generateDraftRender({
+      roomName: room.name,
+      style: opts.style,
+      apartmentType: opts.apartmentType,
+    });
+    console.log(`[room:${room.name}] Step 2 done:`, draftRenderUrl.slice(0, 70));
+  } catch (err) {
+    console.warn(`[room:${room.name}] Step 2 failed, using plan image as base:`, err instanceof Error ? err.message : err);
+    draftRenderUrl = opts.planImageUrl;
+  }
+
+  // Step 3: Depth map via MiDaS
+  console.log(`[room:${room.name}] Step 3: MiDaS depth map`);
+  let depthMapUrl: string | null = null;
+  try {
+    depthMapUrl = await generateDepthMap(draftRenderUrl);
+    console.log(`[room:${room.name}] Step 3 done:`, depthMapUrl.slice(0, 70));
+  } catch (err) {
+    console.warn(`[room:${room.name}] Step 3 (MiDaS) failed, continuing without depth map:`, err instanceof Error ? err.message : err);
+  }
+
+  // Step 4: Final renders × 4 angle variants
+  console.log(`[room:${room.name}] Step 4: final renders (${ANGLE_VARIANTS.length} angles)`);
+  const renderResults = await Promise.allSettled(
+    ANGLE_VARIANTS.map((angle) =>
+      generate({
+        depthMapUrl: draftRenderUrl,
+        prompt: `${opts.sdPromptForRoom}, ${angle}`,
+        negativePrompt: opts.sdNegForRoom,
+        numOutputs: 2,
+        controlWeight: 1.0,
+        roomType: room.name,
+        anonUuid: cryptoRandomUuid(),
+        strength: 0.8,
+        guidanceScale: 15,
+      })
+    )
+  );
+
+  const renderUrls = renderResults
+    .filter((r): r is PromiseFulfilledResult<string[]> => r.status === 'fulfilled')
+    .flatMap(r => r.value)
+    .filter(Boolean);
+
+  console.log(`[room:${room.name}] Step 4 done: ${renderUrls.length}/${ANGLE_VARIANTS.length} renders`);
+
+  if (renderUrls.length === 0) {
+    if (roomGenId) {
+      await supabaseServer.from('generations').update({
+        status: 'failed',
+        error_message: 'All angle renders failed',
+      }).eq('id', roomGenId);
+    }
+    throw new Error(`All renders failed for room: ${room.name}`);
+  }
+
+  // Save per-room results
+  if (roomGenId) {
+    await supabaseServer.from('generations').update({
+      status: 'done',
+      render_urls: renderUrls,
+      image_urls: renderUrls,
+      draft_render_url: draftRenderUrl,
+      depth_map_url: depthMapUrl ?? undefined,
+    }).eq('id', roomGenId);
+  }
+
+  return renderUrls;
+}
+
+// ── Photo pipeline (Step 4 only, 4 renders directly) ─────────────────────────
+
+async function runPhotoPipeline(ctx: {
+  params: RunGenerationParams;
+  brief: DesignBrief | null;
+  sdPrompt: string;
+  sdNegativePrompt: string;
+  startTime: number;
+}) {
+  const { params, brief, sdPrompt, sdNegativePrompt, startTime } = ctx;
+  console.log(`[photo] Running 4 angle renders for: ${params.roomType}`);
+
+  const renderResults = await Promise.allSettled(
+    ANGLE_VARIANTS.map((angle) =>
+      generate({
+        depthMapUrl: params.planImageUrl,
+        prompt: `${sdPrompt}, ${angle}`,
+        negativePrompt: sdNegativePrompt,
+        numOutputs: 2,
+        controlWeight: 1.0,
+        roomType: params.roomType,
+        anonUuid: cryptoRandomUuid(),
+        strength: 0.8,
+        guidanceScale: 15,
+      })
+    )
+  );
+
+  const renderUrls = renderResults
+    .filter((r): r is PromiseFulfilledResult<string[]> => r.status === 'fulfilled')
+    .flatMap(r => r.value)
+    .filter(Boolean);
+
+  console.log(`[photo] Done: ${renderUrls.length}/${ANGLE_VARIANTS.length} renders`);
+
+  const processingTime = Math.round((Date.now() - startTime) / 1000);
+  const reportText = brief ? formatReportText(brief.report_sections) : null;
+  const succeeded = renderUrls.length > 0;
+
+  await supabaseServer.from('generations').update({
+    status: succeeded ? 'done' : 'failed',
+    render_urls: renderUrls,
+    image_urls: renderUrls,
+    designer_text: brief,
+    sd_prompt: sdPrompt,
+    report_text: reportText,
+    color_palette: brief?.color_palette ?? null,
+    processing_time: processingTime,
+    ...(succeeded ? {} : { error_message: 'All renders failed' }),
+  }).eq('id', params.generationId);
+
+  await supabaseServer.from('projects').update({
+    status: succeeded ? 'done' : 'error',
+  }).eq('id', params.projectId);
+
+  if (!succeeded && !params.isAdmin) {
+    await refundTokens(params.session.userId, params.roomCount, params.projectId);
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+async function refundTokens(userId: string, amount: number, projectId: string) {
+  try {
+    await supabaseServer.from('token_transactions').insert({
+      user_id: userId,
+      amount,
+      type: 'refund',
+      reason: 'generation_failed',
+      project_id: projectId,
+      created_at: new Date().toISOString(),
+    });
+    await supabaseServer.rpc('spend_user_tokens', {
+      p_user_id: userId,
+      p_amount: -amount,
+      p_project_id: projectId,
+    });
+  } catch (err) {
+    console.error('[refundTokens] Failed:', err);
   }
 }
 

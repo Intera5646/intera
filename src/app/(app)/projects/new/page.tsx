@@ -292,6 +292,7 @@ export default function NewProjectPage() {
   const [btiAnalyzing, setBtiAnalyzing] = useState(false);
   const [btiRoomCount, setBtiRoomCount] = useState<number | null>(null);
   const [btiRooms, setBtiRooms] = useState<string[]>([]);
+  const [btiRoomsJson, setBtiRoomsJson] = useState('');
   const [btiAnalysisError, setBtiAnalysisError] = useState(false);
   const [dragPhoto, setDragPhoto] = useState(false);
   const [dragBti, setDragBti] = useState(false);
@@ -436,13 +437,15 @@ export default function NewProjectPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ image_url: url }),
         });
-        const d = await r.json() as { success: boolean; roomCount?: number; rooms?: string[] };
+        const d = await r.json() as { success: boolean; roomCount?: number; rooms?: unknown[]; room_names?: string[] };
         if (d.success && d.roomCount && d.roomCount > 0) {
           setBtiRoomCount(Math.max(1, d.roomCount));
-          setBtiRooms(Array.isArray(d.rooms) ? d.rooms : []);
+          setBtiRooms(Array.isArray(d.room_names) ? d.room_names : []);
+          setBtiRoomsJson(JSON.stringify(d.rooms ?? []));
         } else {
           setBtiRoomCount(1);
           setBtiRooms([]);
+          setBtiRoomsJson('');
           if (!d.success) setBtiAnalysisError(true);
         }
       } catch {
@@ -462,6 +465,7 @@ export default function NewProjectPage() {
     setBtiEntry(null);
     setBtiRoomCount(null);
     setBtiRooms([]);
+    setBtiRoomsJson('');
     setBtiAnalyzing(false);
     setBtiAnalysisError(false);
   };
@@ -546,6 +550,7 @@ export default function NewProjectPage() {
             upload_type: uploadedPhotos.length > 0 ? 'combined' : 'bti',
             plan_image_url: btiEntry.uploadedUrl,
             room_count: btiCost,
+            detected_rooms_json: btiRoomsJson || undefined,
           }),
         });
         const d = await r.json();
