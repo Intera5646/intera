@@ -154,18 +154,9 @@ export async function POST(req: NextRequest) {
           user_id: session.userId,
           title: `${style} · ${roomType}`,
           room_type: roomType,
-          apartment_type: apartmentType || null,
-          upload_type: uploadType,
           style,
           budget_level: budget,
           status: 'processing',
-          residents,
-          has_pets: hasPets,
-          needs_workspace: needsWorkspace,
-          lighting_preference: lightingPreference,
-          disliked_colors: dislikedColors,
-          detected_rooms_json: detectedRoomsJson,
-          room_count: roomCount,
           created_at: new Date().toISOString(),
         })
         .select('id')
