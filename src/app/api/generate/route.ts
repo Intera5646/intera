@@ -27,8 +27,6 @@ void controlWeight; // used by adapter internally
 
 const ANGLE_VARIANTS = [
   'front view, main perspective',
-  'side view, alternative angle',
-  'detail view, close up on furniture arrangement',
   'wide angle, full room overview',
 ] as const;
 
@@ -464,7 +462,7 @@ async function runBtiPipeline(ctx: {
   const sampleUrls = results
     .filter((r): r is PromiseFulfilledResult<string[]> => r.status === 'fulfilled')
     .flatMap(r => r.value)
-    .slice(0, 4);
+    .slice(0, 2);
 
   const processingTime = Math.round((Date.now() - startTime) / 1000);
   const reportText = brief ? formatReportText(brief.report_sections) : null;

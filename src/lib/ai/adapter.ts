@@ -23,7 +23,7 @@ export type GenerationParams = {
   depthMapUrl: string;
   prompt: string;
   negativePrompt: string;
-  numOutputs: 2 | 4;
+  numOutputs: 1 | 2 | 4;
   controlWeight: number;
   roomType: string;
   anonUuid: string;
