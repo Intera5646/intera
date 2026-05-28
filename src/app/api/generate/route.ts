@@ -38,8 +38,10 @@ export async function POST(req: NextRequest) {
   console.log('[generate] Request received');
 
   try {
+    console.log('[generate] Step 1: parsing body');
     const body = await req.json();
 
+    console.log('[generate] Step 2: auth check');
     const token = parseSessionCookie(req.headers.get('cookie'));
     if (!token) {
       return NextResponse.json(
@@ -55,6 +57,7 @@ export async function POST(req: NextRequest) {
         { status: 401 }
       );
     }
+    console.log('[generate] Step 2: auth OK, userId:', session.userId, 'role:', session.role);
 
     const roomType        = String(body.room_type ?? '').trim();
     const apartmentType   = String(body.apartment_type ?? '').trim();
@@ -73,6 +76,8 @@ export async function POST(req: NextRequest) {
     const lightingPreference  = String(body.lighting_preference ?? '').trim() || null;
     const dislikedColors      = String(body.disliked_colors ?? '').trim() || null;
 
+    console.log('[generate] Step 2b: parsed fields — roomType:', roomType, '| style:', style, '| budget:', budget, '| planImageUrl:', planImageUrl.slice(0, 60));
+
     if (!roomType || !style || !budget || !planImageUrl) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_INPUT', message: 'Необходимы все данные для генерации.' } },
@@ -80,11 +85,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    console.log('[generate] Step 3: reading balance');
     const balanceResult = await supabaseServer
       .from('profiles')
       .select('token_balance, role')
       .eq('id', session.userId)
       .single();
+
+    console.log('[generate] Step 3: balanceResult error:', balanceResult.error?.message ?? 'none', '| data:', JSON.stringify(balanceResult.data));
 
     if (balanceResult.error || !balanceResult.data) {
       return NextResponse.json(
@@ -93,8 +101,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const isAdmin = balanceResult.data.role === 'admin';
-    const balance = isAdmin ? Infinity : (balanceResult.data.token_balance ?? 0);
+    const rawBalance = balanceResult.data.token_balance;
+    console.log('[generate] Step 4: rawBalance:', rawBalance, '| type:', typeof rawBalance, '| role:', balanceResult.data.role);
+
+    // Admin sentinel: role=admin OR token_balance = -1 (unlimited) OR token_balance = NULL
+    const isAdmin = balanceResult.data.role === 'admin' || rawBalance === -1 || rawBalance === null;
+    // Treat any negative value as infinite (e.g. -1 sentinel)
+    const balance = isAdmin ? Infinity : (rawBalance ?? 0);
+    console.log('[generate] Step 4: isAdmin:', isAdmin, '| effective balance:', balance, '| roomCount:', roomCount);
+
     if (!isAdmin && balance < roomCount) {
       return NextResponse.json(
         { success: false, error: { code: 'INSUFFICIENT_TOKENS', message: 'Недостаточно токенов.' } },
@@ -102,13 +117,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // FIXED: spend tokens BEFORE generation starts (was: deferred to async background).
+    // Spend tokens BEFORE generation starts.
     // SQL spend_user_tokens returns NULL on insufficient balance — must check `data`, not just `error`.
     if (!isAdmin) {
+      console.log('[generate] Step 5: spending', roomCount, 'tokens for user', session.userId);
       const { data: remaining, error: spendError } = await supabaseServer.rpc('spend_user_tokens', {
         user_uuid: session.userId,
         amount: roomCount,
       });
+      console.log('[generate] Step 5: spend result — remaining:', remaining, '| error:', spendError?.message ?? 'none');
       if (spendError) {
         console.error('[generate] Token spend RPC error:', spendError);
         return NextResponse.json(
@@ -116,13 +133,15 @@ export async function POST(req: NextRequest) {
           { status: 500 }
         );
       }
-      // FIXED: detect NULL return = atomic WHERE clause matched no row (insufficient balance race)
+      // NULL return = atomic WHERE clause matched no row (insufficient balance race)
       if (remaining === null || remaining === undefined) {
         return NextResponse.json(
           { success: false, error: { code: 'INSUFFICIENT_TOKENS', message: 'Недостаточно токенов.' } },
           { status: 400 }
         );
       }
+    } else {
+      console.log('[generate] Step 5: skipping token spend (admin/unlimited)');
     }
 
     // Create project. If this fails → refund the just-spent tokens.
@@ -221,11 +240,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, generationId, projectId });
   } catch (error) {
-    // FIXED: was returning { error: String(error) } which doesn't match the
-    // { success, error: { code, message } } envelope the frontend reads.
-    console.error('[generate] Unexpected error:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : undefined;
+    console.error('[generate] FATAL:', errMsg);
+    if (errStack) console.error('[generate] FATAL stack:', errStack);
     return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Внутренняя ошибка сервера.' } },
+      { success: false, error: { code: 'INTERNAL_ERROR', message: errMsg } },
       { status: 500 }
     );
   }
