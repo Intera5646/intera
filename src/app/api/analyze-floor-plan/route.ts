@@ -203,6 +203,12 @@ COUNTING RULES:
 - Separate spaces → Ванная (bathroom) + Туалет (wc), count as 2
 - DO NOT INCLUDE: elevator shafts, stairwells, structural columns
 
+CRITICAL — RECOUNT CHECK:
+Count EVERY enclosed space independently. A typical Russian apartment has 4-8 rooms:
+living room, 1-3 bedrooms, kitchen, hallway, bathroom, WC, and possibly balcony/storage.
+If you detect only 1 room, you have made an error — re-examine the plan carefully,
+trace every set of walls that forms a closed polygon, and list each one separately.
+
 Return ONLY valid JSON — no markdown, no explanation:
 {
   "is_bti_plan": true,
@@ -532,7 +538,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
           ],
         },
       ],
-      max_tokens: 2048,
+      max_tokens: 4096,
       temperature: 0,
     }),
   });
@@ -554,7 +560,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
     throw new Error(`OpenRouter API error: ${data.error.message}`);
   }
   const content = data?.choices?.[0]?.message?.content ?? '';
-  console.log(`[analyze:openrouter] Model content (${content.length} chars):`, content.slice(0, 300));
+  console.log(`[analyze:openrouter] Raw model response — length: ${content.length} chars | first 500: ${content.slice(0, 500)}`);
   const result = parseAnalysisResponse(content);
   if (result) {
     result.debug_raw_response = content.slice(0, 1000);
@@ -590,7 +596,7 @@ async function analyzeWithGroq(base64DataUrl: string, apiKey: string): Promise<A
               ],
             },
           ],
-          max_tokens: 2048,
+          max_tokens: 4096,
           temperature: 0,
         }),
       });
@@ -605,7 +611,7 @@ async function analyzeWithGroq(base64DataUrl: string, apiKey: string): Promise<A
 
       const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
       const content = data?.choices?.[0]?.message?.content ?? '';
-      console.log(`[analyze:groq:${model}] Model content (${content.length} chars):`, content.slice(0, 300));
+      console.log(`[analyze:groq:${model}] Raw model response — length: ${content.length} chars | first 500: ${content.slice(0, 500)}`);
       const result = parseAnalysisResponse(content);
       if (result) {
         result.debug_raw_response = content.slice(0, 1000);
