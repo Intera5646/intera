@@ -146,6 +146,57 @@ export async function generateDraftRender(params: DraftRenderParams): Promise<st
   return urls[0];
 }
 
+// ── Step 4 (alternative): Depth-conditioned ControlNet ──────────────────────
+// Takes a precomputed depth map (e.g. from MiDaS) and a style prompt, returns
+// renders that actually use the depth map as ControlNet conditioning.
+//
+// Model is configured via env var REPLICATE_CONTROLNET_DEPTH_MODEL in the form
+// "owner/name:sha" so it can be swapped without code changes. If unset or if
+// the call fails, the caller falls back to the standard generate() path
+// (adirik/interior-design with the draft render).
+
+export type DepthControlNetParams = {
+  depthMapUrl: string;
+  prompt: string;
+  negativePrompt: string;
+  numOutputs?: number;
+  numInferenceSteps?: number;
+  guidanceScale?: number;
+};
+
+export async function generateWithDepthControlNet(
+  params: DepthControlNetParams
+): Promise<string[]> {
+  const modelRef = process.env.REPLICATE_CONTROLNET_DEPTH_MODEL?.trim();
+  if (!modelRef) {
+    throw new Error('REPLICATE_CONTROLNET_DEPTH_MODEL_NOT_CONFIGURED');
+  }
+
+  const client = getClient();
+  console.log('[depth-controlnet] Calling model:', modelRef, '| depth:', params.depthMapUrl.slice(0, 70));
+
+  // Most modern ControlNet wrappers on Replicate accept the same parameter
+  // shape: image (control image), prompt, negative_prompt, num_outputs,
+  // num_inference_steps, guidance_scale. Unknown params are ignored.
+  const output = await client.run(modelRef as `${string}/${string}:${string}`, {
+    input: {
+      image: params.depthMapUrl,
+      prompt: params.prompt,
+      negative_prompt: params.negativePrompt,
+      num_outputs: params.numOutputs ?? 1,
+      num_inference_steps: params.numInferenceSteps ?? 30,
+      guidance_scale: params.guidanceScale ?? 7.5,
+    },
+  });
+
+  const urls = extractUrls(output);
+  if (urls.length === 0) {
+    throw new Error('generateWithDepthControlNet: no output URLs returned');
+  }
+  console.log('[depth-controlnet] Got', urls.length, 'render(s)');
+  return urls;
+}
+
 // ── Step 3: Depth map via MiDaS ──────────────────────────────────────────────
 
 export async function generateDepthMap(imageUrl: string): Promise<string> {

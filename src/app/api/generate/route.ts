@@ -5,6 +5,7 @@ import {
   generate,
   generateDraftRender,
   generateDepthMap,
+  generateWithDepthControlNet,
 } from '../../../lib/ai/adapter';
 import {
   buildDesignBrief,
@@ -495,12 +496,48 @@ async function runRoomPipeline(opts: {
   }
 
   // Step 4: Final renders × 4 angle variants
-  console.log(`[room:${room.name}] Step 4: final renders (${ANGLE_VARIANTS.length} angles)`);
+  // FIXED: if a ControlNet depth model is configured AND we have a depth map,
+  // feed the depth map directly so geometry is actually depth-conditioned.
+  // Otherwise fall back to adirik/interior-design with the draft render
+  // (which computes its own conditioning internally).
+  const depthModelConfigured = Boolean(
+    depthMapUrl && process.env.REPLICATE_CONTROLNET_DEPTH_MODEL?.trim()
+  );
+  console.log(
+    `[room:${room.name}] Step 4: final renders (${ANGLE_VARIANTS.length} angles) — ` +
+      `path: ${depthModelConfigured ? 'depth-controlnet' : 'adirik (fallback)'}`
+  );
+
   const renderResults = await Promise.allSettled(
-    ANGLE_VARIANTS.map((angle) =>
-      generate({
+    ANGLE_VARIANTS.map(async (angle) => {
+      const prompt = `${opts.sdPromptForRoom}, ${angle}`;
+
+      // Try depth-controlnet path first if configured and depth map exists
+      if (depthModelConfigured && depthMapUrl) {
+        try {
+          console.log(`[room:${room.name}/${angle}] → depth-controlnet`);
+          return await generateWithDepthControlNet({
+            depthMapUrl,
+            prompt,
+            negativePrompt: opts.sdNegForRoom,
+            numOutputs: 1,
+            guidanceScale: 7.5,
+            numInferenceSteps: 30,
+          });
+        } catch (err) {
+          console.warn(
+            `[room:${room.name}/${angle}] depth-controlnet failed, falling back to adirik:`,
+            err instanceof Error ? err.message : err
+          );
+          // fall through to adirik
+        }
+      }
+
+      // Fallback path: existing adirik/interior-design with draft render
+      console.log(`[room:${room.name}/${angle}] → adirik`);
+      return await generate({
         depthMapUrl: draftRenderUrl,
-        prompt: `${opts.sdPromptForRoom}, ${angle}`,
+        prompt,
         negativePrompt: opts.sdNegForRoom,
         numOutputs: 2,
         controlWeight: 1.0,
@@ -508,8 +545,8 @@ async function runRoomPipeline(opts: {
         anonUuid: cryptoRandomUuid(),
         strength: 0.8,
         guidanceScale: 15,
-      })
-    )
+      });
+    })
   );
 
   const renderUrls = renderResults
