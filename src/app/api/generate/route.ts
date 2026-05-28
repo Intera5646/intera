@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
     // SQL spend_user_tokens returns NULL on insufficient balance — must check `data`, not just `error`.
     if (!isAdmin) {
       const { data: remaining, error: spendError } = await supabaseServer.rpc('spend_user_tokens', {
-        user_id: session.userId,
+        user_uuid: session.userId,
         amount: roomCount,
       });
       if (spendError) {
@@ -652,10 +652,11 @@ async function runPhotoPipeline(ctx: {
 // refund tokens before a project_id exists.
 async function refundTokens(userId: string, amount: number, projectId: string | null) {
   try {
-    // SQL function: spend_user_tokens(user_id, amount) — negative amount restores balance
+    // SQL function: spend_user_tokens(user_uuid, amount, project_uuid) — negative amount restores balance
     await supabaseServer.rpc('spend_user_tokens', {
-      user_id: userId,
+      user_uuid: userId,
       amount: -amount,
+      project_uuid: projectId ?? undefined,
     });
     await supabaseServer.from('token_transactions').insert({
       user_id: userId,
