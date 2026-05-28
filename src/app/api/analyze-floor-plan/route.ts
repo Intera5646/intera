@@ -170,61 +170,50 @@ export async function POST(req: NextRequest) {
   });
 }
 
-// ── Prompt ────────────────────────────────────────────────────────────────────
+// ── Prompts ───────────────────────────────────────────────────────────────────
 
-const USER_PROMPT = `This is a Russian apartment floor plan (BTИ/БТИ). Analyze the WALL GEOMETRY and ENCLOSED SPACES to extract precise room dimensions and layout data.
+// Call 1: identify rooms, types, dimensions only — compact output, no wall detail
+const PROMPT_ROOMS_ONLY = `This is a Russian apartment floor plan (план БТИ). It WILL have between 3 and 8 enclosed rooms. Count every space bounded by walls.
 
-STEP 1 — READ THE SCALE:
-Look for dimension lines (sizes in mm or cm written along walls). Use them to determine the real-world scale. If no scale is shown, estimate from standard door widths (~900 mm) or the overall plan width.
+STEP 1 — COUNT: Trace every polygon formed by wall lines. Count each enclosed space separately.
+STEP 2 — IDENTIFY: Determine room type from geometry and symbols:
+  - Largest space with exterior windows → living or bedroom
+  - Space with sink/stove symbol → kitchen
+  - Space with bathtub symbol → bathroom
+  - Small space (~2-4 m²) near bathroom → wc
+  - Narrow connecting space → hallway
+  - Slab attached to exterior wall, no walls on one side → balcony
+STEP 3 — MEASURE: Use dimension lines for width and length. If no scale, estimate from door widths (~0.9 m).
 
-STEP 2 — IDENTIFY EACH ENCLOSED ROOM:
-For each room, trace all 4+ walls. Measure width and length using dimension lines or the scale you determined. Typical ceiling height is 2.7 m for modern buildings.
-
-IDENTIFY BY GEOMETRY AND SYMBOLS:
-- Largest space with exterior windows → Гостиная (living) or Спальня (bedroom)
-- Space with sink/stove symbol → Кухня (kitchen)
-- Space with bathtub symbol → Ванная (bathroom)
-- Small space (~2-4 m²) with toilet → Туалет (wc)
-- Narrow connecting space → Коридор / Прихожая (hallway)
-- Space with exterior wall, no windows, thin slab → Балкон / Лоджия (balcony)
-
-STEP 3 — FOR EACH ROOM, EXTRACT WALLS:
-Number the walls W1, W2, W3, W4 (clockwise from the wall opposite the main entrance/window).
-For each wall record:
-- length in meters (from dimension lines)
-- any doors (width ~0.9 m) or windows (width ~1.2-1.8 m) along it
-
-STEP 4 — SUGGEST CAMERA POSITIONS:
-For each room suggest 1-2 camera angles. A good camera is placed at a corner or mid-wall facing the opposite wall or the window wall. Larger rooms (>15 m²) need 2 cameras.
-
-COUNTING RULES:
-- Each walled-off enclosed space = separate room
-- Bathtub + toilet in same space → Санузел совмещённый (bathroom), type=bathroom, count as 1
-- Separate spaces → Ванная (bathroom) + Туалет (wc), count as 2
-- DO NOT INCLUDE: elevator shafts, stairwells, structural columns
-
-CRITICAL — RECOUNT CHECK:
-Count EVERY enclosed space independently. A typical Russian apartment has 4-8 rooms:
-living room, 1-3 bedrooms, kitchen, hallway, bathroom, WC, and possibly balcony/storage.
-If you detect only 1 room, you have made an error — re-examine the plan carefully,
-trace every set of walls that forms a closed polygon, and list each one separately.
-
-Return ONLY valid JSON — no markdown, no explanation:
+Return ONLY valid JSON, no markdown, no explanation:
 {
-  "is_bti_plan": true,
-  "apartment": {
-    "total_area_m2": 52.0,
-    "ceiling_height_m": 2.7,
-    "orientation": "south"
-  },
+  "total_area_m2": 52,
+  "ceiling_height_m": 2.7,
+  "orientation": "south",
+  "rooms": [
+    { "id": "R1", "name": "Гостиная", "type": "living", "width_m": 3.8, "length_m": 5.2, "size_category": "large" },
+    { "id": "R2", "name": "Спальня", "type": "bedroom", "width_m": 3.0, "length_m": 4.0, "size_category": "medium" }
+  ]
+}
+
+Valid types: kitchen, bedroom, living, bathroom, wc, hallway, balcony, storage, studio_zone
+Valid size_category: small (<10 m²), medium (10-20 m²), large (>20 m²)
+Valid orientation: north, south, east, west, unknown
+
+IMPORTANT: A typical Russian apartment has 4-8 rooms. If you see only 1-2, recount carefully.`;
+
+function buildWallDetailsPrompt(rooms: Array<{ id: string; name: string; width_m: number; length_m: number }>): string {
+  const roomList = rooms.map(r => `  - ${r.id}: ${r.name} (${r.width_m}m × ${r.length_m}m)`).join('\n');
+  return `Look at this Russian apartment floor plan again. You previously identified these rooms:
+${roomList}
+
+For EACH room, extract wall details. Number walls W1 (back/window wall), W2 (right), W3 (front/entrance side), W4 (left) clockwise. Note any doors (~0.9 m wide) or windows (~1.2-1.8 m wide) along each wall, and suggest 1-2 camera positions.
+
+Return ONLY valid JSON, no markdown:
+{
   "rooms": [
     {
       "id": "R1",
-      "name": "Гостиная",
-      "type": "living",
-      "dimensions": { "width_m": 3.8, "length_m": 5.2, "height_m": 2.7 },
-      "size_category": "large",
-      "num_photos_needed": 2,
       "walls": [
         { "id": "W1", "length_m": 5.2, "features": [{ "type": "window", "position_from_start_m": 1.5, "width_m": 1.6 }] },
         { "id": "W2", "length_m": 3.8, "features": [] },
@@ -232,16 +221,49 @@ Return ONLY valid JSON — no markdown, no explanation:
         { "id": "W4", "length_m": 3.8, "features": [] }
       ],
       "suggested_cameras": [
-        { "camera_at_wall_id": "W3", "facing_wall_id": "W1", "description": "Wide shot facing window wall" },
-        { "camera_at_wall_id": "W4", "facing_wall_id": "W2", "description": "Corner shot showing room depth" }
+        { "camera_at_wall_id": "W3", "facing_wall_id": "W1", "description": "Wide shot facing window wall" }
+      ]
+    }
+  ]
+}`;
+}
+
+// USER_PROMPT used by Groq fallback (single-call, same schema as before)
+const USER_PROMPT = `This is a Russian apartment floor plan (план БТИ). It WILL have between 3 and 8 enclosed rooms.
+
+STEP 1 — COUNT: Trace every polygon formed by wall lines. Count each enclosed space.
+STEP 2 — IDENTIFY each room type from geometry and symbols (sink/stove=kitchen, bathtub=bathroom, etc).
+STEP 3 — MEASURE: Use dimension lines. Estimate from door widths (~0.9 m) if no scale.
+STEP 4 — WALLS: For each room, number walls W1-W4 clockwise from the window/feature wall. Note doors and windows.
+STEP 5 — CAMERAS: Suggest 1-2 camera positions per room.
+
+CRITICAL: A typical apartment has 4-8 rooms. If you detect only 1, recount every enclosed polygon carefully.
+
+Return ONLY valid JSON, no markdown:
+{
+  "is_bti_plan": true,
+  "apartment": { "total_area_m2": 52.0, "ceiling_height_m": 2.7, "orientation": "south" },
+  "rooms": [
+    {
+      "id": "R1", "name": "Гостиная", "type": "living",
+      "dimensions": { "width_m": 3.8, "length_m": 5.2, "height_m": 2.7 },
+      "size_category": "large", "num_photos_needed": 2,
+      "walls": [
+        { "id": "W1", "length_m": 5.2, "features": [{ "type": "window", "position_from_start_m": 1.5, "width_m": 1.6 }] },
+        { "id": "W2", "length_m": 3.8, "features": [] },
+        { "id": "W3", "length_m": 5.2, "features": [{ "type": "door", "position_from_start_m": 0.3, "width_m": 0.9, "leads_to_room_id": "R4" }] },
+        { "id": "W4", "length_m": 3.8, "features": [] }
+      ],
+      "suggested_cameras": [
+        { "camera_at_wall_id": "W3", "facing_wall_id": "W1", "description": "Wide shot facing window wall" }
       ]
     }
   ]
 }
 
-Valid type values: kitchen, bedroom, living, bathroom, wc, hallway, balcony, storage, studio_zone
-Valid size_category values: small (<10 m²), medium (10-20 m²), large (>20 m²)
-Valid orientation values: north, south, east, west, unknown`;
+Valid types: kitchen, bedroom, living, bathroom, wc, hallway, balcony, storage, studio_zone
+Valid size_category: small (<10 m²), medium (10-20 m²), large (>20 m²)
+Valid orientation: north, south, east, west, unknown`;
 
 // ── Geometry parsing helpers ──────────────────────────────────────────────────
 
@@ -516,63 +538,212 @@ function parseAnalysisResponse(content: string): AnalysisResult | null {
   }
 }
 
-// ── OpenRouter Qwen3-VL-235B ──────────────────────────────────────────────────
+// ── OpenRouter two-call helpers ───────────────────────────────────────────────
+
+interface RoomsOnlyData {
+  total_area_m2: number;
+  ceiling_height_m: number;
+  orientation: string;
+  rooms: Array<{ id: string; name: string; type: string; width_m: number; length_m: number; size_category: string }>;
+}
+
+function parseRoomsOnlyResponse(content: string): RoomsOnlyData | null {
+  console.log(`[analyze:call1:parse] ${content.length} chars | first 400: ${content.slice(0, 400)}`);
+  try {
+    const parsed = JSON.parse(extractJsonBlock(content)) as Record<string, unknown>;
+    if (!Array.isArray(parsed.rooms) || (parsed.rooms as unknown[]).length === 0) {
+      console.warn('[analyze:call1:parse] No rooms array:', JSON.stringify(parsed).slice(0, 200));
+      return null;
+    }
+    const rooms = (parsed.rooms as unknown[]).map((r: unknown, idx) => {
+      const room = (r ?? {}) as Record<string, unknown>;
+      const dimsRaw = (room.dimensions ?? {}) as Record<string, unknown>;
+      return {
+        id:            String(room.id   ?? `R${idx + 1}`),
+        name:          String(room.name ?? `Комната ${idx + 1}`),
+        type:          String(room.type ?? 'living'),
+        width_m:       clampDim(room.width_m  ?? dimsRaw.width_m,  0.5, 20),
+        length_m:      clampDim(room.length_m ?? dimsRaw.length_m, 0.5, 20),
+        size_category: String(room.size_category ?? 'medium'),
+      };
+    });
+    return {
+      total_area_m2:    clampDim(parsed.total_area_m2,    5,   1000) || 50,
+      ceiling_height_m: clampDim(parsed.ceiling_height_m, 2.0, 5.0) || 2.7,
+      orientation:      String(parsed.orientation ?? 'unknown'),
+      rooms,
+    };
+  } catch (e) {
+    console.warn('[analyze:call1:parse] failed:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+interface WallDetailsData {
+  rooms: Array<{ id: string; walls?: unknown[]; suggested_cameras?: unknown[] }>;
+}
+
+function parseWallDetailsResponse(content: string): WallDetailsData | null {
+  console.log(`[analyze:call2:parse] ${content.length} chars | first 400: ${content.slice(0, 400)}`);
+  try {
+    const parsed = JSON.parse(extractJsonBlock(content)) as Record<string, unknown>;
+    if (!Array.isArray(parsed.rooms)) return null;
+    return { rooms: parsed.rooms as Array<{ id: string; walls?: unknown[]; suggested_cameras?: unknown[] }> };
+  } catch (e) {
+    console.warn('[analyze:call2:parse] failed:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+// ── OpenRouter Qwen3-VL-235B (two sequential calls) ───────────────────────────
 
 async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Promise<AnalysisResult | null> {
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+    'HTTP-Referer': 'https://intera.app',
+    'X-Title': 'INTERA Floor Plan Analyzer',
+  };
+
+  // ── Call 1: room identification (compact schema, low token count) ─────────
+  console.log('[analyze:openrouter] Call 1 — room identification...');
+  const res1 = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': 'https://intera.app',
-      'X-Title': 'INTERA Floor Plan Analyzer',
-    },
+    headers,
     body: JSON.stringify({
       model: 'qwen/qwen3-vl-235b-a22b-instruct',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: base64DataUrl } },
-            { type: 'text', text: USER_PROMPT },
-          ],
-        },
-      ],
-      max_tokens: 4096,
+      messages: [{ role: 'user', content: [
+        { type: 'image_url', image_url: { url: base64DataUrl } },
+        { type: 'text', text: PROMPT_ROOMS_ONLY },
+      ]}],
+      max_tokens: 1024,
       temperature: 0,
     }),
   });
 
-  const responseText = await res.text();
-  console.log(`[analyze:openrouter] HTTP ${res.status} | response length: ${responseText.length} chars`);
-
-  if (!res.ok) {
-    console.error('[analyze:openrouter] Error body:', responseText.slice(0, 400));
-    throw new Error(`OpenRouter HTTP ${res.status}: ${responseText.slice(0, 300)}`);
+  const text1 = await res1.text();
+  console.log(`[analyze:openrouter] Call 1 HTTP ${res1.status} | length: ${text1.length}`);
+  if (!res1.ok) {
+    console.error('[analyze:openrouter] Call 1 error:', text1.slice(0, 400));
+    throw new Error(`OpenRouter Call 1 HTTP ${res1.status}: ${text1.slice(0, 300)}`);
   }
 
-  const data = JSON.parse(responseText) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    error?: { message?: string };
+  const data1 = JSON.parse(text1) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+  if (data1.error) throw new Error(`OpenRouter Call 1 API error: ${data1.error.message}`);
+
+  const content1 = data1?.choices?.[0]?.message?.content ?? '';
+  const roomsData = parseRoomsOnlyResponse(content1);
+  if (!roomsData || roomsData.rooms.length === 0) {
+    console.warn('[analyze:openrouter] Call 1 returned no rooms — falling back to Groq');
+    return null;
+  }
+  console.log(`[analyze:openrouter] Call 1 found ${roomsData.rooms.length} rooms: ${roomsData.rooms.map(r => r.name).join(', ')}`);
+
+  // ── Call 2: wall details for each room ────────────────────────────────────
+  console.log('[analyze:openrouter] Call 2 — wall details...');
+  const wallDetailsMap = new Map<string, { walls?: unknown[]; suggested_cameras?: unknown[] }>();
+
+  try {
+    const res2 = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: 'qwen/qwen3-vl-235b-a22b-instruct',
+        messages: [{ role: 'user', content: [
+          { type: 'image_url', image_url: { url: base64DataUrl } },
+          { type: 'text', text: buildWallDetailsPrompt(roomsData.rooms) },
+        ]}],
+        max_tokens: 3072,
+        temperature: 0,
+      }),
+    });
+
+    const text2 = await res2.text();
+    console.log(`[analyze:openrouter] Call 2 HTTP ${res2.status} | length: ${text2.length}`);
+
+    if (res2.ok) {
+      const data2 = JSON.parse(text2) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+      const content2 = data2?.choices?.[0]?.message?.content ?? '';
+      const wallDetails = parseWallDetailsResponse(content2);
+      if (wallDetails) {
+        for (const room of wallDetails.rooms) {
+          wallDetailsMap.set(room.id, { walls: room.walls, suggested_cameras: room.suggested_cameras });
+        }
+        console.log(`[analyze:openrouter] Call 2 wall details for ${wallDetailsMap.size} rooms`);
+      }
+    } else {
+      console.warn('[analyze:openrouter] Call 2 failed — using default walls:', text2.slice(0, 200));
+    }
+  } catch (err) {
+    console.warn('[analyze:openrouter] Call 2 threw — using default walls:', err instanceof Error ? err.message : err);
+  }
+
+  // ── Merge: combine room list from Call 1 + wall details from Call 2 ───────
+  const geometryRooms: GeometryRoom[] = roomsData.rooms.map((r, idx) => {
+    const details = wallDetailsMap.get(r.id) ?? {};
+    const type = toRoomType(r.type);
+    const defaults = DEFAULT_ROOM_DIMENSIONS[type] ?? { width_m: 3.0, length_m: 4.0 };
+    const width_m  = r.width_m  || defaults.width_m;
+    const length_m = r.length_m || defaults.length_m;
+    const height_m = roomsData.ceiling_height_m || 2.7;
+    const size_category = toSizeCategory(r.size_category, width_m, length_m);
+    const num_photos_needed: 1 | 2 = width_m * length_m >= 15 ? 2 : 1;
+    const walls = parseRoomWalls(details.walls, width_m, length_m);
+
+    let suggested_cameras: CameraSuggestion[];
+    if (Array.isArray(details.suggested_cameras) && details.suggested_cameras.length > 0) {
+      suggested_cameras = (details.suggested_cameras as unknown[]).slice(0, 2).map((c: unknown) => {
+        const cam = (c ?? {}) as Record<string, unknown>;
+        return {
+          camera_at_wall_id: String(cam.camera_at_wall_id ?? 'W3'),
+          facing_wall_id:    String(cam.facing_wall_id    ?? 'W1'),
+          description:       String(cam.description       ?? ''),
+        };
+      });
+    } else {
+      suggested_cameras = buildDefaultCameras(type, num_photos_needed);
+    }
+
+    void idx; // used implicitly via r.id
+    return {
+      id:   r.id,
+      name: r.name,
+      type,
+      dimensions: { width_m, length_m, height_m },
+      size_category,
+      num_photos_needed,
+      walls,
+      suggested_cameras,
+    };
+  });
+
+  const geometry: ApartmentGeometry = {
+    is_bti_plan: true,
+    apartment: {
+      total_area_m2:    roomsData.total_area_m2,
+      ceiling_height_m: roomsData.ceiling_height_m,
+      orientation: (['north','south','east','west'].includes(roomsData.orientation)
+        ? roomsData.orientation : 'unknown') as ApartmentGeometry['apartment']['orientation'],
+    },
+    rooms: geometryRooms,
   };
-  if (data.error) {
-    console.error('[analyze:openrouter] API error in response:', data.error.message);
-    throw new Error(`OpenRouter API error: ${data.error.message}`);
-  }
-  const content = data?.choices?.[0]?.message?.content ?? '';
-  console.log(`[analyze:openrouter] Raw model response — length: ${content.length} chars | first 500: ${content.slice(0, 500)}`);
-  const result = parseAnalysisResponse(content);
-  if (result) {
-    result.debug_raw_response = content.slice(0, 1000);
-  }
-  return result;
+
+  const rooms: RoomInfo[] = geometryRooms.map(geometryRoomToRoomInfo);
+  console.log(`[analyze:openrouter] MERGED — ${geometryRooms.length} rooms | wallsFromCall2: ${wallDetailsMap.size}`);
+
+  return {
+    roomCount: geometryRooms.length,
+    rooms,
+    room_names: geometryRooms.map(r => r.name),
+    geometry_json: geometry,
+    debug_raw_response: content1.slice(0, 500),
+  };
 }
 
 // ── Groq vision models ────────────────────────────────────────────────────────
 
 const GROQ_VISION_MODELS = [
-  'llama-3.2-90b-vision-preview',
-  'llama-3.2-11b-vision-preview',
+  'meta-llama/llama-4-scout-17b-16e-instruct',
 ] as const;
 
 async function analyzeWithGroq(base64DataUrl: string, apiKey: string): Promise<AnalysisResult | null> {
