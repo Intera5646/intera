@@ -6,17 +6,24 @@ import {
   generateDraftRender,
   generateDepthMap,
   generateWithDepthControlNet,
+  generateFluxDepthPro,
 } from '../../../lib/ai/adapter';
 import {
   buildDesignBrief,
   buildFallbackPrompt,
   buildRoomPrompts,
+  buildWallAwareBrief,
   formatReportText,
   type DesignBrief,
   type RoomInfo,
   type RoomPrompt,
 } from '../../../lib/ai/groq';
+import { generateDepthMapBuffer } from '../../../lib/geometry/depthMap';
+import type { ApartmentGeometry, GeometryRoom } from '../../../lib/geometry/types';
 import { STYLE_PROMPTS, ROOM_PROMPTS, BUDGET_PROMPTS } from '../../../lib/data/zones_index';
+
+// Allow long-running background generation on Vercel
+export const maxDuration = 300;
 
 // suppress unused-import warning
 void STYLE_PROMPTS; void ROOM_PROMPTS; void BUDGET_PROMPTS;
@@ -67,6 +74,11 @@ export async function POST(req: NextRequest) {
     const wishes          = String(body.user_wishes ?? '').trim();
     const roomCount       = Math.max(1, Number(body.room_count ?? 1));
     const detectedRoomsJson = String(body.detected_rooms_json ?? '').trim() || null;
+    // v2 pipeline: ApartmentGeometry from /api/analyze-floor-plan
+    const geometryJson: ApartmentGeometry | null =
+      body.geometry_json && typeof body.geometry_json === 'object'
+        ? (body.geometry_json as ApartmentGeometry)
+        : null;
 
     const residents           = String(body.residents ?? '').trim() || null;
     const hasPets             = String(body.has_pets ?? '').trim() || null;
@@ -262,6 +274,7 @@ export async function POST(req: NextRequest) {
       isAdmin,
       roomCount,
       detectedRoomsJson,
+      geometryJson,
       residents,
       hasPets,
       needsWorkspace,
@@ -302,6 +315,7 @@ type RunGenerationParams = {
   isAdmin: boolean;
   roomCount: number;
   detectedRoomsJson: string | null;
+  geometryJson: ApartmentGeometry | null;
   residents: string | null;
   hasPets: string | null;
   needsWorkspace: string | null;
@@ -395,6 +409,19 @@ async function runBtiPipeline(ctx: {
   startTime: number;
 }) {
   const { params, brief, sdPrompt, sdNegativePrompt, startTime } = ctx;
+
+  // ── v2 path: Flux Depth Pro with procedural depth map ────────────────────
+  const useV2 = (process.env.BTI_PIPELINE_V2 ?? '').toLowerCase() === 'true';
+  if (useV2 && params.geometryJson?.rooms?.length) {
+    console.log('[BTI] BTI_PIPELINE_V2=true and geometry present — using v2 pipeline');
+    await runBtiPipelineV2({ params, geometry: params.geometryJson, startTime });
+    return;
+  }
+  if (useV2) {
+    console.log('[BTI] BTI_PIPELINE_V2=true but no geometry_json — falling back to v1');
+  }
+
+  // ── v1 path: existing adirik/MiDaS pipeline ───────────────────────────────
 
   // Parse detected rooms
   let rooms: RoomInfo[] = [];
@@ -699,6 +726,154 @@ async function runPhotoPipeline(ctx: {
   } catch (writeErr) {
     console.error('[photo] Failed to save final status:', writeErr);
   }
+}
+
+// ── BTI v2 pipeline: procedural depth map → Flux Depth Pro ───────────────────
+
+interface CameraMetaEntry {
+  camera_index: number;
+  camera_at_wall_id: string;
+  facing_wall_id: string;
+  description: string;
+  room_id: string;
+  depth_map_url: string;
+}
+
+async function runBtiPipelineV2(ctx: {
+  params: RunGenerationParams;
+  geometry: ApartmentGeometry;
+  startTime: number;
+}) {
+  const { params, geometry, startTime } = ctx;
+
+  // Cache ApartmentGeometry in the project row (non-fatal if it fails)
+  supabaseServer.from('projects')
+    .update({ geometry_extracted_json: geometry })
+    .eq('id', params.projectId)
+    .then(({ error }) => {
+      if (error) console.warn('[BTI-v2] geometry cache write failed (non-fatal):', error.message);
+    });
+
+  // Pick the room that matches the requested roomType
+  const targetRoom = selectTargetRoom(geometry.rooms, params.roomType);
+  if (!targetRoom) {
+    throw new Error('BTI-v2: geometry_json contains no rooms');
+  }
+  console.log(
+    `[BTI-v2] Room: ${targetRoom.name} (${targetRoom.type}) ` +
+    `${targetRoom.dimensions.width_m}×${targetRoom.dimensions.length_m}×${targetRoom.dimensions.height_m}m ` +
+    `| cameras: ${targetRoom.num_photos_needed}`
+  );
+
+  const allRenderUrls: string[] = [];
+  const cameraMetas: CameraMetaEntry[] = [];
+  const cameraCount = Math.min(
+    targetRoom.num_photos_needed,
+    Math.max(1, targetRoom.suggested_cameras.length),
+  );
+
+  for (let camIdx = 0; camIdx < cameraCount; camIdx++) {
+    // Step A: generate procedural depth map (pure local computation)
+    console.log(`[BTI-v2] cam${camIdx}: generating depth map PNG`);
+    const depthPng = await generateDepthMapBuffer(targetRoom, {
+      width: 512, height: 512, cameraIndex: camIdx,
+    });
+
+    // Step B: upload depth map to depth-maps bucket
+    const depthPath = `${params.projectId}/${params.generationId}_cam${camIdx}.png`;
+    const { data: uploadData, error: uploadErr } = await supabaseServer.storage
+      .from('depth-maps')
+      .upload(depthPath, depthPng, { contentType: 'image/png', upsert: true });
+
+    if (uploadErr || !uploadData) {
+      throw new Error(`BTI-v2: depth map upload failed (cam${camIdx}): ${uploadErr?.message ?? 'no data'}`);
+    }
+    const { data: urlData } = supabaseServer.storage
+      .from('depth-maps')
+      .getPublicUrl(uploadData.path);
+    const controlImageUrl = urlData.publicUrl;
+    console.log(`[BTI-v2] cam${camIdx}: depth map uploaded →`, controlImageUrl.slice(0, 80));
+
+    // Step C: build wall-aware Groq prompt
+    const { prompt, negativePrompt } = await buildWallAwareBrief({
+      room: targetRoom,
+      style: params.style,
+      budget: params.budget,
+      wishes: params.wishes || undefined,
+      cameraIndex: camIdx,
+    });
+    console.log(`[BTI-v2] cam${camIdx}: prompt (${prompt.length} chars)`);
+
+    // Step D: call Flux Depth Pro
+    console.log(`[BTI-v2] cam${camIdx}: calling Flux Depth Pro`);
+    const renderUrls = await generateFluxDepthPro({
+      controlImage: controlImageUrl,
+      prompt,
+      negativePrompt,
+      numOutputs: 1,
+      guidanceScale: 3.5,
+      controlStrength: 0.85,
+    });
+    allRenderUrls.push(...renderUrls);
+    console.log(`[BTI-v2] cam${camIdx}: ${renderUrls.length} render(s) returned`);
+
+    const cam = targetRoom.suggested_cameras[camIdx];
+    cameraMetas.push({
+      camera_index: camIdx,
+      camera_at_wall_id: cam?.camera_at_wall_id ?? 'W3',
+      facing_wall_id:    cam?.facing_wall_id    ?? 'W1',
+      description:       cam?.description       ?? '',
+      room_id:           targetRoom.id,
+      depth_map_url:     controlImageUrl,
+    });
+  }
+
+  const processingTime = Math.round((Date.now() - startTime) / 1000);
+  const succeeded = allRenderUrls.length > 0;
+
+  if (!succeeded && !params.isAdmin) {
+    await refundTokens(params.session.userId, params.roomCount, params.projectId);
+  }
+
+  try {
+    await supabaseServer.from('generations').update({
+      status:           succeeded ? 'done' : 'failed',
+      render_urls:      allRenderUrls,
+      image_urls:       allRenderUrls,
+      camera_metadata:  cameraMetas,
+      depth_map_url:    cameraMetas[0]?.depth_map_url ?? null,
+      processing_time:  processingTime,
+      ...(succeeded ? {} : { error_message: 'Flux Depth Pro returned no renders' }),
+    }).eq('id', params.generationId);
+
+    await supabaseServer.from('projects').update({
+      status: succeeded ? 'done' : 'error',
+    }).eq('id', params.projectId);
+  } catch (writeErr) {
+    console.error('[BTI-v2] Failed to write final status (refunds already done):', writeErr);
+  }
+}
+
+// Match roomType param string to the GeometryRoom type vocabulary.
+// Falls back to the first room in the list.
+function selectTargetRoom(rooms: GeometryRoom[], roomType: string): GeometryRoom | null {
+  if (rooms.length === 0) return null;
+  if (rooms.length === 1) return rooms[0];
+
+  const typeMap: Record<string, string[]> = {
+    living_room: ['living', 'studio_zone'],
+    bedroom:     ['bedroom'],
+    kitchen:     ['kitchen', 'studio_zone'],
+    bathroom:    ['bathroom'],
+    toilet:      ['wc'],
+    office:      ['bedroom', 'living'],
+    balcony:     ['balcony'],
+    hallway:     ['hallway'],
+    studio:      ['studio_zone', 'living'],
+  };
+
+  const candidates = typeMap[roomType] ?? [roomType];
+  return rooms.find(r => candidates.includes(r.type)) ?? rooms[0];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
