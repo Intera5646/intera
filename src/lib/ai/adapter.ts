@@ -2,8 +2,8 @@ import Replicate from 'replicate';
 
 // ── Model constants ───────────────────────────────────────────────────────────
 
-// Primary ControlNet interior-design model
-const PRIMARY_MODEL = 'adirik/interior-design';
+// Primary ControlNet interior-design model (versioned SHA required by Replicate /v1/predictions)
+const PRIMARY_MODEL = 'adirik/interior-design:76604baddc85b1b4616e1c6475eca080da339c8b';
 
 // Fallback img2img (used if primary fails)
 const FALLBACK_MODEL =
