@@ -1,4 +1,8 @@
 import Groq from 'groq-sdk';
+import type { GeometryRoom, RoomInfo } from '../geometry/types';
+
+// Re-export so existing callers (`import { RoomInfo } from '…/groq'`) keep working.
+export type { RoomInfo } from '../geometry/types';
 
 let groqClient: Groq | null = null;
 
@@ -7,17 +11,6 @@ function getGroq(): Groq {
     groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
   }
   return groqClient;
-}
-
-// ── Room types (shared with analyze-floor-plan) ───────────────────────────────
-
-export interface RoomInfo {
-  id: string;
-  name: string;
-  approximate_size: 'large' | 'medium' | 'small';
-  windows: 'yes' | 'no';
-  natural_light: 'high' | 'medium' | 'low';
-  connected_to: string[];
 }
 
 export interface RoomPrompt {
@@ -339,6 +332,179 @@ export function formatReportText(sections: DesignBrief['report_sections']): stri
     `💰 Бюджет\n${sections.budget_notes}`,
     `✅ Советы по реализации\n${sections.implementation_tips}`,
   ].join('\n\n');
+}
+
+// ── Wall-aware brief for v2 BTI pipeline (Flux Depth Pro) ────────────────────
+// Uses actual room geometry from Phase 1 extraction to build a targeted prompt.
+// The depth map already encodes the geometry; the prompt focuses on materials,
+// lighting atmosphere, and camera framing that complements it.
+
+export interface WallAwareBriefParams {
+  room: GeometryRoom;
+  style: string;
+  budget: string;
+  wishes?: string;
+  cameraIndex?: number;
+}
+
+// Negative prompt tuned for Flux Depth Pro (geometry comes from depth map,
+// so "bad geometry" terms are omitted to avoid fighting the control signal).
+const FLUX_NEGATIVE_PROMPT =
+  'blurry, low quality, cartoon, illustration, watermark, text, logo, people, ' +
+  'faces, distorted scale, floating objects, oversaturated, flat lighting, ' +
+  'dark shadows, underexposed, noise, artifacts';
+
+const ROOM_TYPE_EN: Record<string, string> = {
+  kitchen:     'kitchen interior',
+  bedroom:     'bedroom interior',
+  living:      'living room interior',
+  bathroom:    'bathroom interior',
+  wc:          'toilet room interior',
+  hallway:     'hallway and entrance area',
+  balcony:     'enclosed balcony interior',
+  storage:     'storage room',
+  studio_zone: 'open-plan kitchen-living room',
+};
+
+const STYLE_DESC: Record<string, string> = {
+  'Скандинавский': 'Scandinavian style, light birch wood, white walls, hygge cozy atmosphere, natural linen textures, indoor plants',
+  'Минимализм':   'minimalist style, clean geometric lines, neutral palette, hidden storage, generous negative space',
+  'Лофт':         'loft industrial style, exposed concrete walls, dark metal accents, Edison vintage bulbs, reclaimed wood',
+  'Классика':     'classical elegant style, crown moldings, warm cream tones, upholstered traditional furniture, parquet floors',
+  'Современный':  'modern contemporary style, sleek matte surfaces, bold accent wall, brushed metal fixtures, statement lighting',
+};
+
+const BUDGET_DESC: Record<string, string> = {
+  'Эконом':  'budget-friendly materials, flat-pack furniture, laminate flooring, white painted walls, LED strip lighting',
+  'Средний': 'mid-range quality, solid wood veneer furniture, engineered hardwood, quality porcelain tiles, designer pendant lights',
+  'Премиум': 'luxury finishes, solid hardwood furniture, natural stone surfaces, venetian plaster, architectural statement lighting',
+};
+
+// Returns the lighting direction relative to the camera position.
+function lightingFromCamera(cameraWallId: string, windowWallIds: string[]): string {
+  if (windowWallIds.length === 0) {
+    return 'warm artificial interior lighting, balanced ambient glow';
+  }
+  // Map: for each camera wall, which facing is "ahead", "left", "right", "behind"
+  const directions: Record<string, Record<string, string>> = {
+    W3: { W1: 'natural daylight from the far wall ahead', W2: 'natural light from the right side', W4: 'natural light from the left side', W3: 'backlit, daylight behind camera' },
+    W1: { W3: 'natural daylight from the far wall ahead', W4: 'natural light from the right side', W2: 'natural light from the left side', W1: 'backlit, daylight behind camera' },
+    W4: { W2: 'natural daylight from the far wall ahead', W1: 'natural light from the right side', W3: 'natural light from the left side', W4: 'backlit, daylight behind camera' },
+    W2: { W4: 'natural daylight from the far wall ahead', W3: 'natural light from the right side', W1: 'natural light from the left side', W2: 'backlit, daylight behind camera' },
+  };
+  const map = directions[cameraWallId] ?? directions['W3'];
+  for (const wid of windowWallIds) {
+    if (map[wid]) return map[wid];
+  }
+  return 'soft natural side lighting';
+}
+
+// Deterministic fallback — used when Groq is unavailable or returns bad JSON.
+function wallAwareFallback(params: WallAwareBriefParams, lightingDesc: string): { prompt: string; negativePrompt: string } {
+  const roomTypeEn = ROOM_TYPE_EN[params.room.type] ?? params.room.type;
+  const styleDesc  = STYLE_DESC[params.style]   ?? params.style;
+  const budgetDesc = BUDGET_DESC[params.budget]  ?? params.budget;
+  const { width_m, length_m, height_m } = params.room.dimensions;
+  const area = width_m * length_m;
+  const sizeTag  = area < 10 ? 'compact' : area < 20 ? 'medium-sized' : 'spacious';
+  const heightTag = height_m < 2.6 ? 'low ceiling' : height_m > 2.9 ? 'high ceiling' : 'standard ceiling height';
+
+  const cam = params.room.suggested_cameras[params.cameraIndex ?? 0];
+  const camDesc = cam?.description ?? 'wide angle interior shot';
+
+  const parts = [
+    'photorealistic interior photograph',
+    roomTypeEn,
+    styleDesc,
+    budgetDesc,
+    `${sizeTag} room, ${heightTag}`,
+    lightingDesc,
+    camDesc,
+    '8K resolution',
+    'professional architectural photography',
+    'cinematic depth of field',
+    'no people',
+  ];
+  if (params.wishes?.trim()) parts.push(params.wishes.slice(0, 120));
+
+  return { prompt: parts.join(', '), negativePrompt: FLUX_NEGATIVE_PROMPT };
+}
+
+export async function buildWallAwareBrief(
+  params: WallAwareBriefParams,
+): Promise<{ prompt: string; negativePrompt: string }> {
+  const { room, style, budget, wishes, cameraIndex = 0 } = params;
+  const { width_m, length_m, height_m } = room.dimensions;
+  const area = width_m * length_m;
+
+  // Collect wall IDs that have at least one window feature
+  const windowWallIds = room.walls
+    .filter(w => w.features.some(f => f.type === 'window'))
+    .map(w => w.id);
+
+  const cam = room.suggested_cameras[cameraIndex] ?? room.suggested_cameras[0];
+  const cameraWallId = cam?.camera_at_wall_id ?? 'W3';
+  const lightingDesc = lightingFromCamera(cameraWallId, windowWallIds);
+
+  const roomTypeEn = ROOM_TYPE_EN[room.type] ?? room.type;
+  const sizeTag    = area < 10 ? 'compact' : area < 20 ? 'medium-sized' : area < 30 ? 'spacious' : 'large open-plan';
+  const heightTag  = height_m < 2.6 ? 'low ceiling' : height_m > 2.9 ? 'high ceiling' : 'standard ceiling height';
+  const camDesc    = cam?.description ?? 'wide angle interior shot';
+
+  // Number of windows and doors for atmosphere hints
+  const totalWindows = room.walls.reduce((n, w) => n + w.features.filter(f => f.type === 'window').length, 0);
+  const windowsHint  = totalWindows === 0 ? 'no windows' : totalWindows === 1 ? 'single window' : 'multiple windows';
+
+  const systemPrompt =
+    'You are a prompt engineer specialising in Flux Depth Pro, a geometry-preserving interior render model. ' +
+    'The room geometry is already encoded in the depth map — your prompt should focus on materials, ' +
+    'lighting atmosphere, style mood, and camera framing. Write in English only. Return JSON only.';
+
+  const userPrompt =
+    `Room: ${roomTypeEn}\n` +
+    `Dimensions: ${width_m.toFixed(1)} × ${length_m.toFixed(1)} m, ${sizeTag}, ${heightTag}\n` +
+    `Windows: ${windowsHint}\n` +
+    `Lighting: ${lightingDesc}\n` +
+    `Camera angle: ${camDesc}\n` +
+    `Style: ${style}\n` +
+    `Budget tier: ${budget}\n` +
+    (wishes?.trim() ? `Client wishes: ${wishes.slice(0, 200)}\n` : '') +
+    `\nReturn JSON:\n` +
+    `{\n` +
+    `  "prompt": "photorealistic interior photograph, [room], [style], [materials], [lighting], [camera], 8K, architectural photography, no people",\n` +
+    `  "negative_prompt": "${FLUX_NEGATIVE_PROMPT}"\n` +
+    `}`;
+
+  try {
+    const completion = await getGroq().chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.35,
+      max_tokens: 450,
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? '{}';
+    const parsed = JSON.parse(raw) as { prompt?: string; negative_prompt?: string };
+
+    if (parsed.prompt && parsed.prompt.length > 20) {
+      console.log('[buildWallAwareBrief] Groq ok — prompt:', parsed.prompt.length, 'chars | room:', room.type, `${area.toFixed(0)}m²`);
+      return {
+        prompt:         parsed.prompt,
+        negativePrompt: parsed.negative_prompt ?? FLUX_NEGATIVE_PROMPT,
+      };
+    }
+    console.warn('[buildWallAwareBrief] Groq returned empty prompt, using fallback');
+  } catch (err) {
+    console.warn('[buildWallAwareBrief] Groq failed, using fallback:', err instanceof Error ? err.message : err);
+  }
+
+  const fallback = wallAwareFallback(params, lightingDesc);
+  console.log('[buildWallAwareBrief] fallback prompt:', fallback.prompt.length, 'chars');
+  return fallback;
 }
 
 // ── Legacy prompt builder (kept for compatibility) ────────────────────────────

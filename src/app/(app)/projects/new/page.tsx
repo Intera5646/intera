@@ -293,6 +293,7 @@ export default function NewProjectPage() {
   const [btiRoomCount, setBtiRoomCount] = useState<number | null>(null);
   const [btiRooms, setBtiRooms] = useState<string[]>([]);
   const [btiRoomsJson, setBtiRoomsJson] = useState('');
+  const [btiGeometryJson, setBtiGeometryJson] = useState<Record<string, unknown> | null>(null);
   const [btiAnalysisError, setBtiAnalysisError] = useState(false);
   const [dragPhoto, setDragPhoto] = useState(false);
   const [dragBti, setDragBti] = useState(false);
@@ -441,16 +442,24 @@ export default function NewProjectPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ image_url: url }),
         });
-        const d = await r.json() as { success: boolean; roomCount?: number; rooms?: unknown[]; room_names?: string[] };
+        const d = await r.json() as {
+          success: boolean;
+          roomCount?: number;
+          rooms?: unknown[];
+          room_names?: string[];
+          geometry_json?: Record<string, unknown> | null;
+        };
         console.log('[BTI Upload] API response:', d);
         if (d.success && d.roomCount && d.roomCount > 0) {
           setBtiRoomCount(Math.max(1, d.roomCount));
           setBtiRooms(Array.isArray(d.room_names) ? d.room_names : []);
           setBtiRoomsJson(JSON.stringify(d.rooms ?? []));
+          setBtiGeometryJson(d.geometry_json ?? null);
         } else {
           setBtiRoomCount(1);
           setBtiRooms([]);
           setBtiRoomsJson('');
+          setBtiGeometryJson(null);
           if (!d.success) setBtiAnalysisError(true);
         }
       } catch (err) {
@@ -558,6 +567,7 @@ export default function NewProjectPage() {
             plan_image_url: btiEntry.uploadedUrl,
             room_count: btiCost,
             detected_rooms_json: btiRoomsJson || undefined,
+            geometry_json: btiGeometryJson ?? undefined,
           }),
         });
         const d = await r.json();
