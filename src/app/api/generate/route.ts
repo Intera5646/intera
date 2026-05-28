@@ -642,7 +642,9 @@ async function runPhotoPipeline(ctx: {
   startTime: number;
 }) {
   const { params, brief, sdPrompt, sdNegativePrompt, startTime } = ctx;
-  console.log(`[photo] Running 4 angle renders for: ${params.roomType}`);
+  console.log(`[photo] Running ${ANGLE_VARIANTS.length} angle renders for: ${params.roomType}`);
+  console.log('[photo] Using original photo directly, skipping txt2img');
+  console.log('[photo] Sending to adirik, prompt_strength: 0.8');
 
   const renderResults = await Promise.allSettled(
     ANGLE_VARIANTS.map((angle) =>
@@ -650,7 +652,7 @@ async function runPhotoPipeline(ctx: {
         depthMapUrl: params.planImageUrl,
         prompt: `${sdPrompt}, ${angle}`,
         negativePrompt: sdNegativePrompt,
-        numOutputs: 2,
+        numOutputs: 1,
         controlWeight: 1.0,
         roomType: params.roomType,
         anonUuid: cryptoRandomUuid(),
