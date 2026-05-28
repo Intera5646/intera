@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
 
     const { data: profile, error: profileError } = await authClient
       .from('profiles')
-      .select('id, role, token_balance, phone')
+      .select('id, role, token_balance, phone, is_test_account')
       .eq('id', userId)
       .limit(1)
       .maybeSingle();

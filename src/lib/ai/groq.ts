@@ -9,6 +9,25 @@ function getGroq(): Groq {
   return groqClient;
 }
 
+// ── Room types (shared with analyze-floor-plan) ───────────────────────────────
+
+export interface RoomInfo {
+  id: string;
+  name: string;
+  approximate_size: 'large' | 'medium' | 'small';
+  windows: 'yes' | 'no';
+  natural_light: 'high' | 'medium' | 'low';
+  connected_to: string[];
+}
+
+export interface RoomPrompt {
+  room_id: string;
+  room_name: string;
+  sd_prompt: string;
+  sd_negative_prompt: string;
+  report_text: string;
+}
+
 export interface DesignerText {
   furniture_placement: string;
   color_solution: string;
@@ -95,6 +114,234 @@ export async function generateDesignerText(params: {
   const content = completion.choices[0]?.message?.content ?? '{}';
   return JSON.parse(content) as DesignerText;
 }
+
+// ── Two-stage design brief ────────────────────────────────────────────────────
+
+export interface DesignBrief {
+  concept: string;
+  materials: {
+    floor: string;
+    walls: string;
+    ceiling: string;
+    furniture: string;
+    accents: string;
+  };
+  furniture_layout: string;
+  lighting: string;
+  color_palette: string[];
+  personalization_notes: string;
+  sd_prompt: string;
+  sd_negative_prompt: string;
+  report_sections: {
+    concept_description: string;
+    materials_description: string;
+    layout_description: string;
+    lighting_description: string;
+    personalization_description: string;
+    budget_notes: string;
+    implementation_tips: string;
+  };
+  room_prompts?: RoomPrompt[];
+}
+
+const BRIEF_SYSTEM_PROMPT = `You are a professional Russian interior designer with 15 years of experience. You create detailed, realistic, and personalized design briefs. Always respond in valid JSON only, no other text.
+
+Given the room parameters, create a complete design brief with this exact JSON structure:
+{
+  "concept": "One sentence describing the overall design concept in Russian",
+  "materials": {
+    "floor": "exact material, finish, color in Russian",
+    "walls": "exact material, texture, color in Russian",
+    "ceiling": "material and height treatment in Russian",
+    "furniture": "main furniture materials and fabrics in Russian",
+    "accents": "decorative elements, plants, textiles in Russian"
+  },
+  "furniture_layout": "Detailed description of furniture placement in Russian, mention specific pieces and their positions",
+  "lighting": "Lighting scheme: main light, accent lights, natural light in Russian",
+  "color_palette": ["hex1", "hex2", "hex3", "hex4"],
+  "personalization_notes": "How the design accounts for residents, pets, workspace needs in Russian",
+  "sd_prompt": "ENGLISH ONLY: photorealistic interior design render, [style] style, [room type], [floor material], [wall material], [specific furniture with placement], [lighting description], [color palette], [decorative details], professional interior photography, shot on Canon EOS R5 24mm f/2.8, 8K resolution, high detail, architectural visualization, warm ambient lighting, realistic materials and textures",
+  "sd_negative_prompt": "ENGLISH ONLY: cartoon, illustration, unrealistic, blurry, low quality, distorted furniture, floating objects, bad proportions, watermark, text",
+  "report_sections": {
+    "concept_description": "2-3 sentences about the concept in Russian",
+    "materials_description": "Detailed materials explanation in Russian",
+    "layout_description": "Furniture arrangement rationale in Russian",
+    "lighting_description": "Lighting design explanation in Russian",
+    "personalization_description": "How design fits the specific residents in Russian",
+    "budget_notes": "What to prioritize in this budget segment in Russian",
+    "implementation_tips": "3 practical tips for implementation in Russian"
+  }
+}`;
+
+export async function buildDesignBrief(params: {
+  roomType: string;
+  style: string;
+  budget: string;
+  ceilingHeight: number;
+  apartmentType?: string;
+  uploadType?: string;
+  residents?: string | null;
+  hasPets?: string | null;
+  needsWorkspace?: string | null;
+  lightingPreference?: string | null;
+  dislikedColors?: string | null;
+  wishes?: string;
+}): Promise<DesignBrief> {
+  const roomLabel = ROOM_LABELS[params.roomType] ?? params.roomType;
+
+  const lines: string[] = [
+    `Тип помещения: ${roomLabel}`,
+    `Стиль: ${params.style}`,
+    `Бюджет: ${params.budget}`,
+    `Высота потолков: ${params.ceilingHeight} мм`,
+  ];
+  if (params.apartmentType) lines.push(`Тип квартиры: ${params.apartmentType}`);
+  if (params.uploadType) lines.push(`Тип входных данных: ${params.uploadType}`);
+  if (params.residents) lines.push(`Количество проживающих: ${params.residents}`);
+  if (params.hasPets) lines.push(`Домашние животные: ${params.hasPets}`);
+  if (params.needsWorkspace) lines.push(`Рабочее место: ${params.needsWorkspace}`);
+  if (params.lightingPreference) lines.push(`Предпочтения по освещению: ${params.lightingPreference}`);
+  if (params.dislikedColors) lines.push(`Нежелательные цвета: ${params.dislikedColors}`);
+  if (params.wishes?.trim()) lines.push(`Пожелания клиента: ${params.wishes.slice(0, 400)}`);
+
+  const userPrompt = `Создай дизайн-бриф для следующего проекта:\n\n${lines.join('\n')}`;
+
+  const attemptParse = async (prompt: string): Promise<DesignBrief> => {
+    const completion = await getGroq().chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: BRIEF_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.6,
+      max_tokens: 1800,
+    });
+    const content = completion.choices[0]?.message?.content ?? '{}';
+    return JSON.parse(content) as DesignBrief;
+  };
+
+  try {
+    const brief = await attemptParse(userPrompt);
+    console.log('[buildDesignBrief] Success, sd_prompt length:', brief.sd_prompt?.length ?? 0);
+    return brief;
+  } catch (firstErr) {
+    console.warn('[buildDesignBrief] First attempt failed, retrying:', firstErr);
+    try {
+      const simplePrompt = `Создай дизайн-бриф. Стиль: ${params.style}. Помещение: ${roomLabel}. Бюджет: ${params.budget}.`;
+      const brief = await attemptParse(simplePrompt);
+      console.log('[buildDesignBrief] Retry succeeded');
+      return brief;
+    } catch (secondErr) {
+      console.error('[buildDesignBrief] Both attempts failed:', secondErr);
+      throw secondErr;
+    }
+  }
+}
+
+export function buildFallbackPrompt(params: { roomType: string; style: string; budget: string }): {
+  sdPrompt: string;
+  sdNegativePrompt: string;
+} {
+  const roomLabelsEn: Record<string, string> = {
+    living_room: 'living room',
+    bedroom: 'bedroom',
+    kitchen: 'kitchen with dining area',
+    bathroom: 'bathroom',
+    office: 'home office',
+    balcony: 'balcony terrace',
+    studio: 'studio apartment',
+  };
+  const room = roomLabelsEn[params.roomType] ?? params.roomType;
+  return {
+    sdPrompt: `photorealistic interior design render, ${params.style} style, ${room}, professional interior photography, shot on Canon EOS R5, 8K resolution, architectural visualization, warm ambient lighting, realistic materials`,
+    sdNegativePrompt:
+      'cartoon, illustration, unrealistic, blurry, low quality, distorted furniture, floating objects, bad proportions, watermark, text',
+  };
+}
+
+// ── Per-room prompts for BTI multi-room pipeline ──────────────────────────────
+
+const ROOM_BRIEF_SYSTEM = `You are a professional Russian interior designer. For each room in the provided list, generate a specific Stable Diffusion prompt and a short Russian report. Respond with valid JSON only, no other text.`;
+
+export async function buildRoomPrompts(params: {
+  rooms: RoomInfo[];
+  style: string;
+  budget: string;
+  concept: string;
+}): Promise<RoomPrompt[]> {
+  const roomList = params.rooms.map((r) => {
+    const sizeDesc = r.approximate_size === 'large' ? 'large' : r.approximate_size === 'small' ? 'small' : 'medium-sized';
+    const lightDesc = r.natural_light === 'high' ? 'bright natural light' : r.natural_light === 'low' ? 'limited natural light' : 'moderate natural light';
+    const windowsDesc = r.windows === 'yes' ? 'has windows' : 'no windows';
+    return `- ${r.id}: ${r.name} (${sizeDesc}, ${windowsDesc}, ${lightDesc})`;
+  }).join('\n');
+
+  const userPrompt = `Style: ${params.style}. Budget: ${params.budget}. Overall concept: ${params.concept}.
+
+Rooms to design:
+${roomList}
+
+For each room return this JSON array:
+[
+  {
+    "room_id": "R1",
+    "room_name": "Гостиная",
+    "sd_prompt": "ENGLISH ONLY: photorealistic interior, [style] style, [room name], [specific furniture], [materials matching size and light], professional photography, Canon EOS R5, 8K",
+    "sd_negative_prompt": "ENGLISH ONLY: cartoon, blurry, low quality, distorted, watermark, text, people",
+    "report_text": "2-3 sentences in Russian about this specific room's design solution"
+  }
+]`;
+
+  const attemptParse = async (prompt: string): Promise<RoomPrompt[]> => {
+    const completion = await getGroq().chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: ROOM_BRIEF_SYSTEM },
+        { role: 'user', content: prompt },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.6,
+      max_tokens: 400 * params.rooms.length + 200,
+    });
+    const content = completion.choices[0]?.message?.content ?? '{}';
+    // Groq json_object mode wraps arrays — unwrap if needed
+    const parsed = JSON.parse(content) as Record<string, unknown> | RoomPrompt[];
+    if (Array.isArray(parsed)) return parsed as RoomPrompt[];
+    // Find the first array value in the object
+    const firstArray = Object.values(parsed).find(Array.isArray) as RoomPrompt[] | undefined;
+    return firstArray ?? [];
+  };
+
+  try {
+    const prompts = await attemptParse(userPrompt);
+    console.log('[buildRoomPrompts] Generated', prompts.length, 'room prompts');
+    return prompts;
+  } catch (err) {
+    console.warn('[buildRoomPrompts] Failed, returning fallback prompts:', err);
+    return params.rooms.map((r) => ({
+      room_id: r.id,
+      room_name: r.name,
+      sd_prompt: `photorealistic interior design render, ${params.style} style, ${r.name}, professional photography, 8K, architectural visualization`,
+      sd_negative_prompt: 'cartoon, blurry, low quality, distorted, watermark, text, people',
+      report_text: `Дизайн ${r.name} выполнен в стиле ${params.style} с учётом бюджета ${params.budget}.`,
+    }));
+  }
+}
+
+export function formatReportText(sections: DesignBrief['report_sections']): string {
+  return [
+    `🎨 Концепция\n${sections.concept_description}`,
+    `🪵 Материалы\n${sections.materials_description}`,
+    `🛋 Расстановка мебели\n${sections.layout_description}`,
+    `💡 Освещение\n${sections.lighting_description}`,
+    `👥 Персонализация\n${sections.personalization_description}`,
+    `💰 Бюджет\n${sections.budget_notes}`,
+    `✅ Советы по реализации\n${sections.implementation_tips}`,
+  ].join('\n\n');
+}
+
+// ── Legacy prompt builder (kept for compatibility) ────────────────────────────
 
 export async function buildGenerationPrompt(params: {
   roomType: string;

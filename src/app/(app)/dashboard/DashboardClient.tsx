@@ -26,17 +26,25 @@ interface Project {
 interface DashboardClientProps {
   initialTokenBalance: number
   initialProjects: Project[]
+  userName?: string
+  userEmail?: string
+  userRole?: string
 }
 
-export default function DashboardClient({ initialTokenBalance, initialProjects }: DashboardClientProps) {
+export default function DashboardClient({ initialTokenBalance, initialProjects, userName, userEmail, userRole }: DashboardClientProps) {
   const router = useRouter()
+  const isAdmin = userRole === 'admin'
 
   const processedProjects = initialProjects.map((project) => ({
     ...project,
     thumbnail: project.generations?.[0]?.render_urls?.[0] ?? null,
+    genId: project.generations?.[0]?.id ?? null,
     statusLabel: statusLabels[project.status] ?? project.status,
     date: project.created_at ? new Date(project.created_at).toLocaleDateString('ru-RU') : '',
   }))
+
+  const userIdentifier = userName || userEmail || ''
+  const displayBalance = initialTokenBalance === -1 ? '∞' : String(initialTokenBalance)
 
   return (
     <main className="dashboard-screen" style={{ minHeight: '100vh', background: 'var(--brand-surface)' }}>
@@ -50,9 +58,42 @@ export default function DashboardClient({ initialTokenBalance, initialProjects }
               Ваши проекты и баланс токенов находятся здесь. Начните новый интерьерный проект прямо сейчас.
             </p>
           </div>
-          <button className="btn btn--brand" style={{ width: 220 }} onClick={() => router.push('/projects/new')}>
-            Создать новый проект
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+            <button className="btn btn--brand" style={{ width: 220 }} onClick={() => router.push('/projects/new')}>
+              Создать новый проект
+            </button>
+            {isAdmin && (
+              <button
+                onClick={() => router.push('/admin')}
+                style={{
+                  width: 220,
+                  padding: '8px 16px',
+                  borderRadius: 20,
+                  border: '1px solid rgba(13,27,42,0.18)',
+                  background: 'transparent',
+                  color: 'var(--brand-primary)',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  letterSpacing: '0.03em',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                <span style={{ fontSize: 10, opacity: 0.7 }}>⚙</span>
+                Режим администратора
+              </button>
+            )}
+            {userIdentifier && (
+              <div style={{ textAlign: 'right', fontSize: 12, color: 'var(--muted)' }}>
+                {userIdentifier}{' '}
+                <span>·</span>{' '}
+                <a href="/api/auth/logout" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Выйти</a>
+              </div>
+            )}
+          </div>
         </div>
 
         <section style={{ marginTop: 28, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, alignItems: 'stretch' }}>
@@ -63,12 +104,14 @@ export default function DashboardClient({ initialTokenBalance, initialProjects }
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ fontSize: 54, fontWeight: 800, color: 'var(--brand-gold)', lineHeight: 1 }}>
-                  {initialTokenBalance}
+                  {displayBalance}
                 </div>
                 <div style={{ fontSize: 18, color: 'var(--ink)' }}>токенов</div>
               </div>
               <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
-                Баланс обновляется автоматически. Используйте токены для новых генераций.
+                {isAdmin
+                  ? 'Безлимитный доступ — admin аккаунт.'
+                  : 'Баланс обновляется автоматически. Используйте токены для новых генераций.'}
               </div>
             </div>
           </div>
@@ -131,34 +174,37 @@ export default function DashboardClient({ initialTokenBalance, initialProjects }
                 </button>
               </div>
             ) : (
-              processedProjects.map((project: any) => (
-                <div
-                  key={project.id}
-                  className="card"
-                  style={{ borderColor: 'rgba(13,27,42,0.08)', padding: '18px', cursor: 'pointer' }}
-                  onClick={() => router.push(`/projects/${project.id}`)}
-                >
-                  <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: 14, alignItems: 'center' }}>
-                    <div style={{ width: 90, height: 90, borderRadius: 18, overflow: 'hidden', background: '#f4f2ee' }}>
-                      {project.thumbnail ? (
-                        <img src={project.thumbnail} alt={project.style} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', color: 'var(--muted)', fontSize: 12 }}>
-                          Нет превью
+              processedProjects.map((project) => {
+                const href = project.genId ? `/projects/${project.genId}` : `/projects`
+                return (
+                  <div
+                    key={project.id}
+                    className="card"
+                    style={{ borderColor: 'rgba(13,27,42,0.08)', padding: '18px', cursor: 'pointer' }}
+                    onClick={() => router.push(href)}
+                  >
+                    <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr', gap: 14, alignItems: 'center' }}>
+                      <div style={{ width: 90, height: 90, borderRadius: 18, overflow: 'hidden', background: '#f4f2ee' }}>
+                        {project.thumbnail ? (
+                          <img src={project.thumbnail} alt={project.style} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', color: 'var(--muted)', fontSize: 12 }}>
+                            Нет превью
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--brand-primary)' }}>{project.style}</div>
+                        <div style={{ marginTop: 6, fontSize: 13, color: 'var(--muted)' }}>{project.room_type}</div>
+                        <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <span className="pill" style={{ background: 'rgba(13,27,42,0.05)', color: 'var(--ink)' }}>{project.statusLabel}</span>
+                          <span style={{ fontSize: 12, color: 'var(--muted)' }}>{project.date}</span>
                         </div>
-                      )}
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--brand-primary)' }}>{project.style}</div>
-                      <div style={{ marginTop: 6, fontSize: 13, color: 'var(--muted)' }}>{project.room_type}</div>
-                      <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                        <span className="pill" style={{ background: 'rgba(13,27,42,0.05)', color: 'var(--ink)' }}>{project.statusLabel}</span>
-                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{project.date}</span>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
         </section>
