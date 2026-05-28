@@ -216,3 +216,65 @@ export async function generateDepthMap(imageUrl: string): Promise<string> {
   console.log('[generateDepthMap] done:', urls[0].slice(0, 60));
   return urls[0];
 }
+
+// ── Flux Depth Pro (v2 BTI pipeline) ─────────────────────────────────────────
+// Official Black Forest Labs model — no version SHA, uses the /models/ endpoint.
+// control_image must be a publicly accessible PNG/JPEG URL (e.g. Supabase Storage
+// signed URL). Returns an array of output image URLs.
+
+export type FluxDepthProParams = {
+  /** URL of the procedural depth map (output of generateDepthMapBuffer uploaded to storage) */
+  controlImage: string;
+  prompt: string;
+  negativePrompt?: string;
+  numOutputs?: 1 | 2 | 4;
+  numInferenceSteps?: number;
+  guidanceScale?: number;
+  /** 0–1 — how strongly the depth map controls the output, default 0.85 */
+  controlStrength?: number;
+};
+
+export async function generateFluxDepthPro(params: FluxDepthProParams): Promise<string[]> {
+  const client = getClient();
+
+  const numOutputs      = params.numOutputs        ?? 1;
+  const inferenceSteps  = params.numInferenceSteps  ?? 28;
+  const guidanceScale   = params.guidanceScale       ?? 3.5;
+  const controlStrength = params.controlStrength     ?? 0.85;
+
+  console.log(
+    '[flux-depth-pro] Starting | outputs:', numOutputs,
+    '| steps:', inferenceSteps,
+    '| guidance:', guidanceScale,
+    '| control_strength:', controlStrength,
+    '| control_image:', params.controlImage.slice(0, 80),
+  );
+
+  // The Replicate SDK routes calls without a version SHA to the official
+  // /v1/models/<owner>/<name>/predictions endpoint automatically.
+  const output = await client.run('black-forest-labs/flux-depth-pro' as `${string}/${string}`, {
+    input: {
+      prompt:           params.prompt,
+      control_image:    params.controlImage,
+      negative_prompt:  params.negativePrompt ?? '',
+      num_outputs:      numOutputs,
+      num_inference_steps: inferenceSteps,
+      guidance_scale:   guidanceScale,
+      control_strength: controlStrength,
+      output_format:    'png',
+      output_quality:   90,
+    },
+  });
+
+  if (!output) {
+    throw new Error('generateFluxDepthPro: Replicate returned no output');
+  }
+
+  const urls = extractUrls(output);
+  if (urls.length === 0) {
+    throw new Error('generateFluxDepthPro: no output URLs in response');
+  }
+
+  console.log('[flux-depth-pro] Done —', urls.length, 'render(s):', urls[0].slice(0, 70));
+  return urls;
+}
