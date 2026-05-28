@@ -552,3 +552,80 @@ export async function buildGenerationPrompt(params: {
 
   return { prompt, negativePrompt };
 }
+
+// ── Apartment-level design report for BTI v2 pipeline ────────────────────────
+// Called once after all room renders complete — one Groq call for the whole project.
+
+export async function buildApartmentReport(params: {
+  geometry: import('../geometry/types').ApartmentGeometry;
+  style: string;
+  budget: string;
+  wishes?: string;
+}): Promise<{ designerText: DesignerText; reportText: string }> {
+  const { geometry, style, budget, wishes } = params;
+  const range = BUDGET_RANGES[budget] ?? { min: 500000, max: 1500000 };
+
+  const roomList = geometry.rooms
+    .map(r => `- ${r.name}: ${r.dimensions.width_m}×${r.dimensions.length_m} м (${r.type})`)
+    .join('\n');
+
+  const wishesClause = wishes?.trim() ? `\nПожелания: ${wishes.slice(0, 300)}` : '';
+
+  const systemPrompt =
+    'Ты — профессиональный дизайнер интерьеров в России. Отвечаешь конкретно и по-русски. Только JSON, никакого лишнего текста.';
+
+  const userPrompt = `Опиши единую дизайн-концепцию всей квартиры.
+Стиль: "${style}". Бюджет: "${budget}".
+Площадь: ${geometry.apartment.total_area_m2} м². Высота потолков: ${geometry.apartment.ceiling_height_m} м.
+
+Помещения:
+${roomList}
+${wishesClause}
+
+Объясни цельную концепцию: выбор материалов по комнатам (например, плитка в кухне и прихожей, паркет в жилых), цветовое единство, световые сценарии по зонам.
+
+Верни ровно такой JSON (без markdown, без пояснений):
+{
+  "furniture_placement": "Логика расстановки и зонирования всей квартиры: проходные пространства, хранение, функциональность (2-4 предложения)",
+  "color_solution": "Единая цветовая палитра квартиры: основные тона, акценты, как цвет объединяет разные комнаты (2-4 предложения)",
+  "lighting": "Световые сценарии по зонам: кухня, жилые, санузел, прихожая — тип светильников и логика (2-4 предложения)",
+  "style_explanation": "Стиль и материалы: почему плитка в кухне/прихожей, что в спальнях, отделка стен — как материалы усиливают стиль (2-4 предложения)",
+  "budget_range": {
+    "min": ${range.min},
+    "max": ${range.max},
+    "currency": "RUB",
+    "description": "Что входит в бюджет данного сегмента: черновые работы, чистовые, мебель, декор"
+  },
+  "shopping_highlights": [
+    {"category": "Напольное покрытие (жилые)", "item": "конкретный материал и марка", "price_range": "от X до Y ₽/м²"},
+    {"category": "Напольное покрытие (кухня/прихожая)", "item": "плитка или иной материал", "price_range": "от X до Y ₽/м²"},
+    {"category": "Кухонный гарнитур", "item": "стиль, материал фасадов", "price_range": "от X до Y ₽"},
+    {"category": "Освещение", "item": "основная система + акценты", "price_range": "от X до Y ₽"},
+    {"category": "Мебель (жилые комнаты)", "item": "ключевые предметы", "price_range": "от X до Y ₽"}
+  ]
+}`;
+
+  const completion = await getGroq().chat.completions.create({
+    model: 'llama-3.3-70b-versatile',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.6,
+    max_tokens: 1200,
+  });
+
+  const content = completion.choices[0]?.message?.content ?? '{}';
+  const designerText = JSON.parse(content) as DesignerText;
+
+  const reportText = [
+    `🎨 Концепция стиля\n${designerText.style_explanation ?? ''}`,
+    `🛋 Планировка и зонирование\n${designerText.furniture_placement ?? ''}`,
+    `🎨 Цветовая палитра\n${designerText.color_solution ?? ''}`,
+    `💡 Освещение\n${designerText.lighting ?? ''}`,
+    `💰 Бюджет\n${designerText.budget_range?.description ?? ''}`,
+  ].join('\n\n');
+
+  return { designerText, reportText };
+}

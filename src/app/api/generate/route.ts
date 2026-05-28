@@ -13,8 +13,10 @@ import {
   buildFallbackPrompt,
   buildRoomPrompts,
   buildWallAwareBrief,
+  buildApartmentReport,
   formatReportText,
   type DesignBrief,
+  type DesignerText,
   type RoomInfo,
   type RoomPrompt,
 } from '../../../lib/ai/groq';
@@ -780,6 +782,25 @@ async function runBtiPipelineV2(ctx: {
     await refundTokens(params.session.userId, params.roomCount, params.projectId);
   }
 
+  // One Groq call for the whole apartment design report (non-fatal)
+  let designerText: DesignerText | null = null;
+  let reportText: string | null = null;
+  if (succeeded) {
+    try {
+      const report = await buildApartmentReport({
+        geometry,
+        style: params.style,
+        budget: params.budget,
+        wishes: params.wishes || undefined,
+      });
+      designerText = report.designerText;
+      reportText = report.reportText;
+      console.log('[BTI-v2] Apartment design report generated');
+    } catch (err) {
+      console.warn('[BTI-v2] Design report failed (non-fatal):', err instanceof Error ? err.message : err);
+    }
+  }
+
   try {
     await supabaseServer.from('generations').update({
       status:          succeeded ? 'done' : 'failed',
@@ -788,6 +809,7 @@ async function runBtiPipelineV2(ctx: {
       camera_metadata: cameraMetas,
       depth_map_url:   cameraMetas[0]?.depth_map_url ?? null,
       processing_time: processingTime,
+      ...(designerText ? { designer_text: designerText, report_text: reportText } : {}),
       ...(succeeded ? {} : { error_message: 'Flux Depth Pro returned no renders' }),
     }).eq('id', params.generationId);
 
