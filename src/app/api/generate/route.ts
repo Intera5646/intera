@@ -144,77 +144,119 @@ export async function POST(req: NextRequest) {
       console.log('[generate] Step 5: skipping token spend (admin/unlimited)');
     }
 
-    // Create project. If this fails → refund the just-spent tokens.
-    const projectRecord = await supabaseServer
-      .from('projects')
-      .insert({
-        user_id: session.userId,
-        title: `${style} · ${roomType}`,
-        room_type: roomType,
-        apartment_type: apartmentType || null,
-        upload_type: uploadType,
-        style,
-        budget_level: budget,
-        status: 'processing',
-        residents,
-        has_pets: hasPets,
-        needs_workspace: needsWorkspace,
-        lighting_preference: lightingPreference,
-        disliked_colors: dislikedColors,
-        detected_rooms_json: detectedRoomsJson,
-        room_count: roomCount,
-        created_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
-
-    if (projectRecord.error || !projectRecord.data) {
+    // ── Step 6: Create project ──────────────────────────────────────────────
+    console.log('[generate] Step 6: inserting project row — user_id:', session.userId, '| roomCount:', roomCount);
+    let projectRecord;
+    try {
+      projectRecord = await supabaseServer
+        .from('projects')
+        .insert({
+          user_id: session.userId,
+          title: `${style} · ${roomType}`,
+          room_type: roomType,
+          apartment_type: apartmentType || null,
+          upload_type: uploadType,
+          style,
+          budget_level: budget,
+          status: 'processing',
+          residents,
+          has_pets: hasPets,
+          needs_workspace: needsWorkspace,
+          lighting_preference: lightingPreference,
+          disliked_colors: dislikedColors,
+          detected_rooms_json: detectedRoomsJson,
+          room_count: roomCount,
+          created_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+    } catch (insertErr) {
+      const msg = insertErr instanceof Error ? insertErr.message : String(insertErr);
+      console.error('[generate] Step 6 THREW synchronously:', msg);
       if (!isAdmin) await refundTokens(session.userId, roomCount, null);
       return NextResponse.json(
-        { success: false, error: { code: 'DATABASE_ERROR', message: 'Не удалось создать проект.' } },
+        { success: false, error: { code: 'DATABASE_ERROR', message: `Project insert threw: ${msg}` } },
+        { status: 500 }
+      );
+    }
+
+    console.log('[generate] Step 6 result — error:', projectRecord.error?.message ?? 'none', '| code:', projectRecord.error?.code ?? 'none', '| data:', JSON.stringify(projectRecord.data));
+
+    if (projectRecord.error || !projectRecord.data) {
+      const errDetail = projectRecord.error ? `${projectRecord.error.code}: ${projectRecord.error.message}` : 'no data returned';
+      console.error('[generate] Step 6 FAILED:', errDetail);
+      if (!isAdmin) await refundTokens(session.userId, roomCount, null);
+      return NextResponse.json(
+        { success: false, error: { code: 'DATABASE_ERROR', message: `Не удалось создать проект: ${errDetail}` } },
         { status: 500 }
       );
     }
 
     const projectId = projectRecord.data.id;
+    console.log('[generate] Step 7: project created OK, projectId:', projectId);
 
-    // Log the spend now that we have a project_id
+    // ── Step 8: Log token transaction ───────────────────────────────────────
     if (!isAdmin) {
-      await supabaseServer.from('token_transactions').insert({
-        user_id: session.userId,
-        amount: -roomCount,
-        type: 'generation',
-        reason: 'generation_started',
-        project_id: projectId,
-        created_at: new Date().toISOString(),
-      });
+      console.log('[generate] Step 8: inserting token_transaction');
+      try {
+        const txResult = await supabaseServer.from('token_transactions').insert({
+          user_id: session.userId,
+          amount: -roomCount,
+          type: 'generation',
+          reason: 'generation_started',
+          project_id: projectId,
+          created_at: new Date().toISOString(),
+        });
+        console.log('[generate] Step 8 done — error:', txResult.error?.message ?? 'none');
+      } catch (txErr) {
+        // Non-fatal: token was already spent; just log and continue
+        console.warn('[generate] Step 8 token_transactions insert threw (non-fatal):', txErr instanceof Error ? txErr.message : txErr);
+      }
+    } else {
+      console.log('[generate] Step 8: skipping token_transaction (admin)');
     }
 
-    // Create master generation record (used for navigation + overall status)
-    const generationRecord = await supabaseServer
-      .from('generations')
-      .insert({
-        project_id: projectId,
-        status: 'pending',
-        room_name: uploadType === 'bti' ? 'apartment' : roomType,
-        room_index: uploadType === 'bti' ? -1 : 0,
-        prompt_used: `${style} ${budget} ${roomType}`,
-        budget_range: { budget, currency: 'RUB' },
-        created_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
-
-    if (generationRecord.error || !generationRecord.data) {
-      // FIXED: refund if generation record creation fails (was: silently lost tokens)
+    // ── Step 9: Create master generation record ─────────────────────────────
+    console.log('[generate] Step 9: inserting generation record');
+    let generationRecord;
+    try {
+      generationRecord = await supabaseServer
+        .from('generations')
+        .insert({
+          project_id: projectId,
+          status: 'pending',
+          room_name: uploadType === 'bti' ? 'apartment' : roomType,
+          room_index: uploadType === 'bti' ? -1 : 0,
+          prompt_used: `${style} ${budget} ${roomType}`,
+          budget_range: { budget, currency: 'RUB' },
+          created_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+    } catch (genInsertErr) {
+      const msg = genInsertErr instanceof Error ? genInsertErr.message : String(genInsertErr);
+      console.error('[generate] Step 9 THREW synchronously:', msg);
       if (!isAdmin) await refundTokens(session.userId, roomCount, projectId);
       return NextResponse.json(
-        { success: false, error: { code: 'DATABASE_ERROR', message: 'Не удалось создать задачу генерации.' } },
+        { success: false, error: { code: 'DATABASE_ERROR', message: `Generation insert threw: ${msg}` } },
+        { status: 500 }
+      );
+    }
+
+    console.log('[generate] Step 9 result — error:', generationRecord.error?.message ?? 'none', '| code:', generationRecord.error?.code ?? 'none', '| id:', generationRecord.data?.id ?? 'null');
+
+    if (generationRecord.error || !generationRecord.data) {
+      const errDetail = generationRecord.error ? `${generationRecord.error.code}: ${generationRecord.error.message}` : 'no data returned';
+      console.error('[generate] Step 9 FAILED:', errDetail);
+      if (!isAdmin) await refundTokens(session.userId, roomCount, projectId);
+      return NextResponse.json(
+        { success: false, error: { code: 'DATABASE_ERROR', message: `Не удалось создать задачу генерации: ${errDetail}` } },
         { status: 500 }
       );
     }
 
     const generationId = generationRecord.data.id;
+    console.log('[generate] Step 10: firing background generation — generationId:', generationId);
 
     void runGeneration({
       generationId,
@@ -238,6 +280,7 @@ export async function POST(req: NextRequest) {
       dislikedColors,
     });
 
+    console.log('[generate] Step 11: returning success { generationId, projectId }');
     return NextResponse.json({ success: true, generationId, projectId });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
