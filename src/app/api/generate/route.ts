@@ -746,7 +746,7 @@ async function runBtiPipelineV2(ctx: {
 }) {
   const { params, geometry, startTime } = ctx;
 
-  // Cache ApartmentGeometry in the project row (non-fatal if it fails)
+  // Cache ApartmentGeometry in the project row (non-fatal)
   supabaseServer.from('projects')
     .update({ geometry_extracted_json: geometry })
     .eq('id', params.projectId)
@@ -754,78 +754,23 @@ async function runBtiPipelineV2(ctx: {
       if (error) console.warn('[BTI-v2] geometry cache write failed (non-fatal):', error.message);
     });
 
-  // Pick the room that matches the requested roomType
-  const targetRoom = selectTargetRoom(geometry.rooms, params.roomType);
-  if (!targetRoom) {
-    throw new Error('BTI-v2: geometry_json contains no rooms');
-  }
-  console.log(
-    `[BTI-v2] Room: ${targetRoom.name} (${targetRoom.type}) ` +
-    `${targetRoom.dimensions.width_m}×${targetRoom.dimensions.length_m}×${targetRoom.dimensions.height_m}m ` +
-    `| cameras: ${targetRoom.num_photos_needed}`
+  console.log(`[BTI-v2] Processing ${geometry.rooms.length} rooms in parallel — 1 camera, 1 render each`);
+
+  const roomResults = await Promise.allSettled(
+    geometry.rooms.map(room => runBtiRoomV2({ room, params }))
   );
 
   const allRenderUrls: string[] = [];
   const cameraMetas: CameraMetaEntry[] = [];
-  const cameraCount = Math.min(
-    targetRoom.num_photos_needed,
-    Math.max(1, targetRoom.suggested_cameras.length),
-  );
 
-  for (let camIdx = 0; camIdx < cameraCount; camIdx++) {
-    // Step A: generate procedural depth map (pure local computation)
-    console.log(`[BTI-v2] cam${camIdx}: generating depth map PNG`);
-    const depthPng = await generateDepthMapBuffer(targetRoom, {
-      width: 512, height: 512, cameraIndex: camIdx,
-    });
-
-    // Step B: upload depth map to depth-maps bucket
-    const depthPath = `${params.projectId}/${params.generationId}_cam${camIdx}.png`;
-    const { data: uploadData, error: uploadErr } = await supabaseServer.storage
-      .from('depth-maps')
-      .upload(depthPath, depthPng, { contentType: 'image/png', upsert: true });
-
-    if (uploadErr || !uploadData) {
-      throw new Error(`BTI-v2: depth map upload failed (cam${camIdx}): ${uploadErr?.message ?? 'no data'}`);
+  for (const result of roomResults) {
+    if (result.status === 'fulfilled') {
+      allRenderUrls.push(...result.value.renderUrls);
+      cameraMetas.push(result.value.cameraMeta);
+    } else {
+      const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      console.error('[BTI-v2] Room failed:', msg);
     }
-    const { data: urlData } = supabaseServer.storage
-      .from('depth-maps')
-      .getPublicUrl(uploadData.path);
-    const controlImageUrl = urlData.publicUrl;
-    console.log(`[BTI-v2] cam${camIdx}: depth map uploaded →`, controlImageUrl.slice(0, 80));
-
-    // Step C: build wall-aware Groq prompt
-    const { prompt, negativePrompt } = await buildWallAwareBrief({
-      room: targetRoom,
-      style: params.style,
-      budget: params.budget,
-      wishes: params.wishes || undefined,
-      cameraIndex: camIdx,
-    });
-    console.log(`[BTI-v2] cam${camIdx}: prompt (${prompt.length} chars)`);
-
-    // Step D: call Flux Depth Pro
-    console.log(`[BTI-v2] cam${camIdx}: calling Flux Depth Pro`);
-    const renderUrls = await generateFluxDepthPro({
-      controlImage: controlImageUrl,
-      prompt,
-      negativePrompt,
-      numOutputs: 1,
-      guidanceScale: 3.5,
-      controlStrength: 0.85,
-    });
-    allRenderUrls.push(...renderUrls);
-    console.log(`[BTI-v2] cam${camIdx}: ${renderUrls.length} render(s) returned`);
-
-    const cam = targetRoom.suggested_cameras[camIdx];
-    cameraMetas.push({
-      camera_index: camIdx,
-      camera_at_wall_id: cam?.camera_at_wall_id ?? 'W3',
-      facing_wall_id:    cam?.facing_wall_id    ?? 'W1',
-      description:       cam?.description       ?? '',
-      room_id:           targetRoom.id,
-      depth_map_url:     controlImageUrl,
-    });
   }
 
   const processingTime = Math.round((Date.now() - startTime) / 1000);
@@ -837,12 +782,12 @@ async function runBtiPipelineV2(ctx: {
 
   try {
     await supabaseServer.from('generations').update({
-      status:           succeeded ? 'done' : 'failed',
-      render_urls:      allRenderUrls,
-      image_urls:       allRenderUrls,
-      camera_metadata:  cameraMetas,
-      depth_map_url:    cameraMetas[0]?.depth_map_url ?? null,
-      processing_time:  processingTime,
+      status:          succeeded ? 'done' : 'failed',
+      render_urls:     allRenderUrls,
+      image_urls:      allRenderUrls,
+      camera_metadata: cameraMetas,
+      depth_map_url:   cameraMetas[0]?.depth_map_url ?? null,
+      processing_time: processingTime,
       ...(succeeded ? {} : { error_message: 'Flux Depth Pro returned no renders' }),
     }).eq('id', params.generationId);
 
@@ -854,26 +799,63 @@ async function runBtiPipelineV2(ctx: {
   }
 }
 
-// Match roomType param string to the GeometryRoom type vocabulary.
-// Falls back to the first room in the list.
-function selectTargetRoom(rooms: GeometryRoom[], roomType: string): GeometryRoom | null {
-  if (rooms.length === 0) return null;
-  if (rooms.length === 1) return rooms[0];
+async function runBtiRoomV2(opts: {
+  room: GeometryRoom;
+  params: RunGenerationParams;
+}): Promise<{ renderUrls: string[]; cameraMeta: CameraMetaEntry }> {
+  const { room, params } = opts;
+  const camIdx = 0;
 
-  const typeMap: Record<string, string[]> = {
-    living_room: ['living', 'studio_zone'],
-    bedroom:     ['bedroom'],
-    kitchen:     ['kitchen', 'studio_zone'],
-    bathroom:    ['bathroom'],
-    toilet:      ['wc'],
-    office:      ['bedroom', 'living'],
-    balcony:     ['balcony'],
-    hallway:     ['hallway'],
-    studio:      ['studio_zone', 'living'],
+  // Step A: generate procedural depth map
+  console.log(`[BTI-v2:${room.name}] Generating depth map`);
+  const depthPng = await generateDepthMapBuffer(room, { width: 512, height: 512, cameraIndex: camIdx });
+
+  // Step B: upload to depth-maps bucket
+  const depthPath = `${params.projectId}/${params.generationId}_${room.id}.png`;
+  const { data: uploadData, error: uploadErr } = await supabaseServer.storage
+    .from('depth-maps')
+    .upload(depthPath, depthPng, { contentType: 'image/png', upsert: true });
+
+  if (uploadErr || !uploadData) {
+    throw new Error(`depth map upload failed for ${room.name}: ${uploadErr?.message ?? 'no data'}`);
+  }
+  const { data: urlData } = supabaseServer.storage.from('depth-maps').getPublicUrl(uploadData.path);
+  const controlImageUrl = urlData.publicUrl;
+  console.log(`[BTI-v2:${room.name}] Depth map →`, controlImageUrl.slice(0, 80));
+
+  // Step C: build wall-aware Groq prompt
+  const { prompt, negativePrompt } = await buildWallAwareBrief({
+    room,
+    style: params.style,
+    budget: params.budget,
+    wishes: params.wishes || undefined,
+    cameraIndex: camIdx,
+  });
+
+  // Step D: call Flux Depth Pro (1 render)
+  console.log(`[BTI-v2:${room.name}] Calling Flux Depth Pro`);
+  const renderUrls = await generateFluxDepthPro({
+    controlImage: controlImageUrl,
+    prompt,
+    negativePrompt,
+    numOutputs: 1,
+    guidanceScale: 3.5,
+    controlStrength: 0.85,
+  });
+  console.log(`[BTI-v2:${room.name}] ${renderUrls.length} render(s) returned`);
+
+  const cam = room.suggested_cameras[camIdx];
+  return {
+    renderUrls,
+    cameraMeta: {
+      camera_index:      camIdx,
+      camera_at_wall_id: cam?.camera_at_wall_id ?? 'W3',
+      facing_wall_id:    cam?.facing_wall_id    ?? 'W1',
+      description:       cam?.description       ?? '',
+      room_id:           room.id,
+      depth_map_url:     controlImageUrl,
+    },
   };
-
-  const candidates = typeMap[roomType] ?? [roomType];
-  return rooms.find(r => candidates.includes(r.type)) ?? rooms[0];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
