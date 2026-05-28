@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '../../../../lib/supabase/server';
+import { parseSessionCookie, verifySessionToken } from '../../../../lib/auth';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // Auth check — status polling requires a valid session
+  const token = parseSessionCookie(req.headers.get('cookie'));
+  if (!token || !verifySessionToken(token)) {
+    return NextResponse.json(
+      { success: false, error: { code: 'UNAUTHORIZED', message: 'Требуется авторизация.' } },
+      { status: 401 }
+    );
+  }
+
   const { id } = await params;
   const generationId = id;
   if (!generationId) {

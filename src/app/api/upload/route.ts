@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { parseSessionCookie, verifySessionToken } from '../../../lib/auth';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -7,6 +8,15 @@ const supabaseAdmin = createClient(
 );
 
 export async function POST(req: NextRequest) {
+  // Auth check — unauthenticated uploads blocked
+  const token = parseSessionCookie(req.headers.get('cookie'));
+  if (!token || !verifySessionToken(token)) {
+    return NextResponse.json(
+      { success: false, error: { code: 'UNAUTHORIZED', message: 'Требуется авторизация.' } },
+      { status: 401 }
+    );
+  }
+
   const formData = await req.formData();
   const file = formData.get('file');
 

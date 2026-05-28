@@ -14,9 +14,8 @@ interface AnalysisResult {
 // Sending base64 bypasses all URL access issues (private buckets, signed URL
 // expiry, firewall). The model receives the image bytes directly.
 async function toBase64DataUrl(imageUrl: string): Promise<string> {
-  console.log('[analyze] Downloading image for base64 encoding:', imageUrl.slice(0, 120));
+  console.log('[analyze:base64] Downloading image:', imageUrl.slice(0, 120));
 
-  // First try: get a signed URL from Supabase so the download itself succeeds
   const downloadUrl = await toSignedUrl(imageUrl);
 
   const res = await fetch(downloadUrl);
@@ -25,12 +24,11 @@ async function toBase64DataUrl(imageUrl: string): Promise<string> {
   }
 
   const contentType = res.headers.get('content-type') ?? 'image/jpeg';
-  // Normalise to a valid image MIME type
   const mime = contentType.startsWith('image/') ? contentType.split(';')[0] : 'image/jpeg';
 
   const buffer = await res.arrayBuffer();
   const base64 = Buffer.from(buffer).toString('base64');
-  console.log('[analyze] Image downloaded — mime:', mime, '| size:', buffer.byteLength, 'bytes | base64 length:', base64.length);
+  console.log(`[analyze:base64] OK — mime: ${mime} | bytes: ${buffer.byteLength} | base64 chars: ${base64.length}`);
 
   return `data:${mime};base64,${base64}`;
 }
@@ -106,21 +104,25 @@ export async function POST(req: NextRequest) {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const groqKey = process.env.GROQ_API_KEY;
 
-  console.log('[analyze] OPENROUTER_API_KEY present:', !!openRouterKey);
-  console.log('[analyze] GROQ_API_KEY present:', !!groqKey);
+  console.log('[analyze] Keys present — OPENROUTER_API_KEY:', !!openRouterKey, '| GROQ_API_KEY:', !!groqKey);
 
-  // Try OpenRouter Qwen2-VL-72B first
+  // Try OpenRouter Qwen3-VL-235B first
   if (openRouterKey) {
     try {
-      console.log('[analyze] Calling OpenRouter Qwen2-VL-72B with base64 image...');
+      console.log('[analyze:openrouter] Calling qwen/qwen3-vl-235b-a22b-instruct with base64 image...');
+      const t0 = Date.now();
       const result = await analyzeWithOpenRouter(base64DataUrl, openRouterKey);
+      const elapsed = Date.now() - t0;
       if (result) {
-        console.log('[analyze] OpenRouter success — roomCount:', result.roomCount, '| rooms:', result.room_names.join(', '));
+        console.log(`[analyze:openrouter] SUCCESS in ${elapsed}ms — roomCount: ${result.roomCount} | rooms: ${result.room_names.join(', ')}`);
         return NextResponse.json({ success: true, ...result });
       }
-      console.warn('[analyze] OpenRouter returned null result');
+      console.warn(`[analyze:openrouter] Returned null result after ${elapsed}ms`);
     } catch (err) {
-      console.warn('[analyze] OpenRouter failed:', err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      console.error('[analyze:openrouter] FAILED:', msg);
+      if (stack) console.error('[analyze:openrouter] stack:', stack);
     }
   } else {
     console.log('[analyze] Skipping OpenRouter (no API key)');
@@ -129,21 +131,26 @@ export async function POST(req: NextRequest) {
   // Fallback: Groq LLaMA 3.2 vision
   if (groqKey) {
     try {
-      console.log('[analyze] Calling Groq vision with base64 image...');
+      console.log('[analyze:groq] Calling Groq vision fallback with base64 image...');
+      const t0 = Date.now();
       const result = await analyzeWithGroq(base64DataUrl, groqKey);
+      const elapsed = Date.now() - t0;
       if (result) {
-        console.log('[analyze] Groq success — roomCount:', result.roomCount, '| rooms:', result.room_names.join(', '));
+        console.log(`[analyze:groq] SUCCESS in ${elapsed}ms — roomCount: ${result.roomCount} | rooms: ${result.room_names.join(', ')}`);
         return NextResponse.json({ success: true, ...result });
       }
-      console.warn('[analyze] Groq returned null result');
+      console.warn(`[analyze:groq] Returned null result after ${elapsed}ms`);
     } catch (err) {
-      console.warn('[analyze] Groq failed:', err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      console.error('[analyze:groq] FAILED:', msg);
+      if (stack) console.error('[analyze:groq] stack:', stack);
     }
   } else {
     console.log('[analyze] Skipping Groq (no API key)');
   }
 
-  console.log('[analyze] Both providers failed — returning safe default: roomCount 1');
+  console.warn('[analyze] Both providers failed — returning safe default roomCount:1');
   return NextResponse.json({ success: true, roomCount: 1, rooms: [], room_names: [], debug_raw_response: 'both_providers_failed' });
 }
 
@@ -198,19 +205,18 @@ Return ONLY valid JSON with no explanation, no markdown, no extra text:
 // ── Response parser ───────────────────────────────────────────────────────────
 
 function parseAnalysisResponse(content: string): AnalysisResult | null {
-  console.log('[analyze] Raw model response:', content.slice(0, 500));
+  console.log(`[analyze:parse] Raw response (${content.length} chars):`, content.slice(0, 600));
   try {
-    // Strip markdown code fences if present
     const cleaned = content.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
     const parsed = JSON.parse(cleaned) as { room_count?: unknown; rooms?: unknown[] };
     const count = Number(parsed?.room_count);
     if (!Number.isFinite(count) || count <= 0) {
-      console.warn('[analyze] Invalid room_count in response:', parsed?.room_count);
+      console.warn('[analyze:parse] Invalid room_count:', parsed?.room_count, '| full parsed:', JSON.stringify(parsed).slice(0, 300));
       return null;
     }
 
     const rawRooms = Array.isArray(parsed?.rooms) ? parsed.rooms : [];
-    console.log('[analyze] Parsed rooms array length:', rawRooms.length);
+    console.log(`[analyze:parse] room_count: ${count} | rooms array length: ${rawRooms.length}`);
 
     const rooms: RoomInfo[] = rawRooms.slice(0, 20).map((r: unknown, idx) => {
       const room = (r ?? {}) as Record<string, unknown>;
@@ -235,7 +241,8 @@ function parseAnalysisResponse(content: string): AnalysisResult | null {
       debug_raw_response: content.slice(0, 1000),
     };
   } catch (e) {
-    console.warn('[analyze] JSON parse failed:', e, '| content was:', content.slice(0, 300));
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('[analyze:parse] JSON.parse failed:', msg, '| cleaned content was:', content.slice(0, 400));
     return null;
   }
 }
@@ -252,7 +259,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
       'X-Title': 'INTERA Floor Plan Analyzer',
     },
     body: JSON.stringify({
-      model: 'qwen/qwen2-vl-72b-instruct',
+      model: 'qwen/qwen3-vl-235b-a22b-instruct',
       messages: [
         {
           role: 'user',
@@ -268,15 +275,20 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
   });
 
   const responseText = await res.text();
-  console.log('[analyze] OpenRouter HTTP status:', res.status);
-  console.log('[analyze] OpenRouter raw response:', responseText.slice(0, 600));
+  console.log(`[analyze:openrouter] HTTP ${res.status} | response length: ${responseText.length} chars`);
 
   if (!res.ok) {
+    console.error('[analyze:openrouter] Error body:', responseText.slice(0, 400));
     throw new Error(`OpenRouter HTTP ${res.status}: ${responseText.slice(0, 300)}`);
   }
 
-  const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+  if (data.error) {
+    console.error('[analyze:openrouter] API error in response:', data.error.message);
+    throw new Error(`OpenRouter API error: ${data.error.message}`);
+  }
   const content = data?.choices?.[0]?.message?.content ?? '';
+  console.log(`[analyze:openrouter] Model content (${content.length} chars):`, content.slice(0, 300));
   const result = parseAnalysisResponse(content);
   if (result) {
     result.debug_raw_response = content.slice(0, 1000);
@@ -319,16 +331,16 @@ async function analyzeWithGroq(base64DataUrl: string, apiKey: string): Promise<A
       });
 
       const responseText = await res.text();
-      console.log('[analyze] Groq', model, 'HTTP status:', res.status);
-      console.log('[analyze] Groq', model, 'raw response:', responseText.slice(0, 600));
+      console.log(`[analyze:groq:${model}] HTTP ${res.status} | response length: ${responseText.length} chars`);
 
       if (!res.ok) {
-        console.warn('[analyze] Groq', model, 'failed:', responseText.slice(0, 200));
+        console.warn(`[analyze:groq:${model}] Failed:`, responseText.slice(0, 300));
         continue;
       }
 
       const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
       const content = data?.choices?.[0]?.message?.content ?? '';
+      console.log(`[analyze:groq:${model}] Model content (${content.length} chars):`, content.slice(0, 300));
       const result = parseAnalysisResponse(content);
       if (result) {
         result.debug_raw_response = content.slice(0, 1000);

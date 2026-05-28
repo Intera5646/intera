@@ -226,11 +226,23 @@ async function runGeneration(params: RunGenerationParams) {
       .eq('id', params.generationId);
 
     // Spend tokens upfront (all rooms atomically)
+    // SQL function signature: spend_user_tokens(user_id UUID, amount INTEGER)
     if (!params.isAdmin) {
-      await supabaseServer.rpc('spend_user_tokens', {
-        p_user_id: params.session.userId,
-        p_amount: params.roomCount,
-        p_project_id: params.projectId,
+      const { error: spendError } = await supabaseServer.rpc('spend_user_tokens', {
+        user_id: params.session.userId,
+        amount: params.roomCount,
+      });
+      if (spendError) {
+        throw new Error(`Token spend failed: ${spendError.message}`);
+      }
+      // Log spend transaction (RPC only deducts, doesn't log)
+      await supabaseServer.from('token_transactions').insert({
+        user_id: params.session.userId,
+        amount: -params.roomCount,
+        type: 'generation',
+        reason: 'generation_started',
+        project_id: params.projectId,
+        created_at: new Date().toISOString(),
       });
     }
 
@@ -486,7 +498,7 @@ async function runRoomPipeline(opts: {
       render_urls: renderUrls,
       image_urls: renderUrls,
       draft_render_url: draftRenderUrl,
-      depth_map_url: depthMapUrl ?? undefined,
+      depth_map_url: depthMapUrl ?? null,
     }).eq('id', roomGenId);
   }
 
@@ -557,18 +569,18 @@ async function runPhotoPipeline(ctx: {
 
 async function refundTokens(userId: string, amount: number, projectId: string) {
   try {
+    // SQL function: spend_user_tokens(user_id, amount) — negative amount restores tokens
+    await supabaseServer.rpc('spend_user_tokens', {
+      user_id: userId,
+      amount: -amount,
+    });
     await supabaseServer.from('token_transactions').insert({
       user_id: userId,
-      amount,
+      amount, // positive = credit back to user
       type: 'refund',
       reason: 'generation_failed',
       project_id: projectId,
       created_at: new Date().toISOString(),
-    });
-    await supabaseServer.rpc('spend_user_tokens', {
-      p_user_id: userId,
-      p_amount: -amount,
-      p_project_id: projectId,
     });
   } catch (err) {
     console.error('[refundTokens] Failed:', err);
