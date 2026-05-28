@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import { parseSessionCookie, verifySessionToken } from '../../../lib/auth';
 import { supabaseServer } from '../../../lib/supabase/server';
 import {
@@ -261,7 +262,7 @@ export async function POST(req: NextRequest) {
     const generationId = generationRecord.data.id;
     console.log('[generate] Step 10: firing background generation — generationId:', generationId);
 
-    void runGeneration({
+    waitUntil(runGeneration({
       generationId,
       projectId,
       session,
@@ -282,7 +283,7 @@ export async function POST(req: NextRequest) {
       needsWorkspace,
       lightingPreference,
       dislikedColors,
-    });
+    }));
 
     console.log('[generate] Step 11: returning success { generationId, projectId }');
     return NextResponse.json({ success: true, generationId, projectId });
