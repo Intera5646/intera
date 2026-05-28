@@ -5,7 +5,8 @@ import { parseSessionCookie, verifySessionToken } from '../../../../lib/auth';
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Auth check — status polling requires a valid session
   const token = parseSessionCookie(req.headers.get('cookie'));
-  if (!token || !verifySessionToken(token)) {
+  const session = token ? verifySessionToken(token) : null;
+  if (!session) {
     return NextResponse.json(
       { success: false, error: { code: 'UNAUTHORIZED', message: 'Требуется авторизация.' } },
       { status: 401 }
@@ -20,12 +21,27 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { data, error } = await supabaseServer
     .from('generations')
-    .select('status, render_urls, error_message, designer_text')
+    .select('status, render_urls, error_message, designer_text, project_id')
     .eq('id', generationId)
     .single();
 
-  if (error) {
+  if (error || !data) {
     return NextResponse.json({ success: false, error: { code: 'NOT_FOUND', message: 'Генерация не найдена.' } }, { status: 404 });
+  }
+
+  // FIXED: ownership check — was missing, any authenticated user could poll any generation
+  if (session.role !== 'admin') {
+    const { data: project, error: projectError } = await supabaseServer
+      .from('projects')
+      .select('user_id')
+      .eq('id', data.project_id)
+      .single();
+    if (projectError || !project || project.user_id !== session.userId) {
+      return NextResponse.json(
+        { success: false, error: { code: 'FORBIDDEN', message: 'Нет доступа к этой генерации.' } },
+        { status: 403 }
+      );
+    }
   }
 
   const progress = data.status === 'done' ? 100 : data.status === 'processing' ? 60 : 20;

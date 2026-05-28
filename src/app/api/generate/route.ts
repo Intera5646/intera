@@ -101,7 +101,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Create project
+    // FIXED: spend tokens BEFORE generation starts (was: deferred to async background).
+    // SQL spend_user_tokens returns NULL on insufficient balance — must check `data`, not just `error`.
+    if (!isAdmin) {
+      const { data: remaining, error: spendError } = await supabaseServer.rpc('spend_user_tokens', {
+        user_id: session.userId,
+        amount: roomCount,
+      });
+      if (spendError) {
+        console.error('[generate] Token spend RPC error:', spendError);
+        return NextResponse.json(
+          { success: false, error: { code: 'DATABASE_ERROR', message: 'Не удалось списать токены.' } },
+          { status: 500 }
+        );
+      }
+      // FIXED: detect NULL return = atomic WHERE clause matched no row (insufficient balance race)
+      if (remaining === null || remaining === undefined) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INSUFFICIENT_TOKENS', message: 'Недостаточно токенов.' } },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Create project. If this fails → refund the just-spent tokens.
     const projectRecord = await supabaseServer
       .from('projects')
       .insert({
@@ -126,6 +149,7 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (projectRecord.error || !projectRecord.data) {
+      if (!isAdmin) await refundTokens(session.userId, roomCount, null);
       return NextResponse.json(
         { success: false, error: { code: 'DATABASE_ERROR', message: 'Не удалось создать проект.' } },
         { status: 500 }
@@ -133,6 +157,18 @@ export async function POST(req: NextRequest) {
     }
 
     const projectId = projectRecord.data.id;
+
+    // Log the spend now that we have a project_id
+    if (!isAdmin) {
+      await supabaseServer.from('token_transactions').insert({
+        user_id: session.userId,
+        amount: -roomCount,
+        type: 'generation',
+        reason: 'generation_started',
+        project_id: projectId,
+        created_at: new Date().toISOString(),
+      });
+    }
 
     // Create master generation record (used for navigation + overall status)
     const generationRecord = await supabaseServer
@@ -150,6 +186,8 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (generationRecord.error || !generationRecord.data) {
+      // FIXED: refund if generation record creation fails (was: silently lost tokens)
+      if (!isAdmin) await refundTokens(session.userId, roomCount, projectId);
       return NextResponse.json(
         { success: false, error: { code: 'DATABASE_ERROR', message: 'Не удалось создать задачу генерации.' } },
         { status: 500 }
@@ -182,8 +220,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, generationId, projectId });
   } catch (error) {
+    // FIXED: was returning { error: String(error) } which doesn't match the
+    // { success, error: { code, message } } envelope the frontend reads.
     console.error('[generate] Unexpected error:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Внутренняя ошибка сервера.' } },
+      { status: 500 }
+    );
   }
 }
 
@@ -219,32 +262,15 @@ async function runGeneration(params: RunGenerationParams) {
   const startTime = Date.now();
   console.log(`[runGeneration] Starting — uploadType: ${params.uploadType}, rooms: ${params.roomCount}`);
 
+  // FIXED: tokens are now spent in POST handler before this runs.
+  // Inner pipelines own their refund logic; outer catch must not refund
+  // (would double-refund on top of partial inner refunds).
+
   try {
     await supabaseServer
       .from('generations')
       .update({ status: 'processing' })
       .eq('id', params.generationId);
-
-    // Spend tokens upfront (all rooms atomically)
-    // SQL function signature: spend_user_tokens(user_id UUID, amount INTEGER)
-    if (!params.isAdmin) {
-      const { error: spendError } = await supabaseServer.rpc('spend_user_tokens', {
-        user_id: params.session.userId,
-        amount: params.roomCount,
-      });
-      if (spendError) {
-        throw new Error(`Token spend failed: ${spendError.message}`);
-      }
-      // Log spend transaction (RPC only deducts, doesn't log)
-      await supabaseServer.from('token_transactions').insert({
-        user_id: params.session.userId,
-        amount: -params.roomCount,
-        type: 'generation',
-        reason: 'generation_started',
-        project_id: params.projectId,
-        created_at: new Date().toISOString(),
-      });
-    }
 
     // Stage A: Global design brief from Groq
     let brief: DesignBrief | null = null;
@@ -282,22 +308,27 @@ async function runGeneration(params: RunGenerationParams) {
       await runPhotoPipeline({ params, brief, sdPrompt, sdNegativePrompt, startTime });
     }
   } catch (error) {
+    // FIXED: unhandled orchestration error. Inner pipelines wrap their own writes,
+    // so reaching here means catastrophic failure with no inner refund done.
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('[runGeneration] Failed:', errorMessage);
+    console.error('[runGeneration] Unhandled error (defensive):', errorMessage);
+
+    try {
+      await supabaseServer
+        .from('generations')
+        .update({ status: 'failed', error_message: errorMessage })
+        .eq('id', params.generationId);
+      await supabaseServer
+        .from('projects')
+        .update({ status: 'error' })
+        .eq('id', params.projectId);
+    } catch (writeErr) {
+      console.error('[runGeneration] Failed to mark failure status:', writeErr);
+    }
 
     if (!params.isAdmin) {
       await refundTokens(params.session.userId, params.roomCount, params.projectId);
     }
-
-    await supabaseServer
-      .from('generations')
-      .update({ status: 'failed', error_message: errorMessage })
-      .eq('id', params.generationId);
-
-    await supabaseServer
-      .from('projects')
-      .update({ status: 'error' })
-      .eq('id', params.projectId);
   }
 }
 
@@ -383,21 +414,28 @@ async function runBtiPipeline(ctx: {
   const processingTime = Math.round((Date.now() - startTime) / 1000);
   const reportText = brief ? formatReportText(brief.report_sections) : null;
 
-  await supabaseServer.from('generations').update({
-    status: successCount === 0 ? 'failed' : 'done',
-    render_urls: sampleUrls,
-    image_urls: sampleUrls,
-    designer_text: brief,
-    sd_prompt: sdPrompt,
-    report_text: reportText,
-    color_palette: brief?.color_palette ?? null,
-    processing_time: processingTime,
-    ...(successCount === 0 ? { error_message: 'All rooms failed to generate' } : {}),
-  }).eq('id', params.generationId);
+  // FIXED: wrap final status writes so a Supabase failure here can't propagate
+  // to runGeneration's outer catch (which would then double-refund on top of
+  // the per-room partial refund done above).
+  try {
+    await supabaseServer.from('generations').update({
+      status: successCount === 0 ? 'failed' : 'done',
+      render_urls: sampleUrls,
+      image_urls: sampleUrls,
+      designer_text: brief,
+      sd_prompt: sdPrompt,
+      report_text: reportText,
+      color_palette: brief?.color_palette ?? null,
+      processing_time: processingTime,
+      ...(successCount === 0 ? { error_message: 'All rooms failed to generate' } : {}),
+    }).eq('id', params.generationId);
 
-  await supabaseServer.from('projects').update({
-    status: successCount === 0 ? 'error' : 'done',
-  }).eq('id', params.projectId);
+    await supabaseServer.from('projects').update({
+      status: successCount === 0 ? 'error' : 'done',
+    }).eq('id', params.projectId);
+  } catch (writeErr) {
+    console.error('[BTI] Failed to save final status (refunds already done):', writeErr);
+  }
 }
 
 // ── Single room pipeline (Steps 2–4) ─────────────────────────────────────────
@@ -544,32 +582,40 @@ async function runPhotoPipeline(ctx: {
   const reportText = brief ? formatReportText(brief.report_sections) : null;
   const succeeded = renderUrls.length > 0;
 
-  await supabaseServer.from('generations').update({
-    status: succeeded ? 'done' : 'failed',
-    render_urls: renderUrls,
-    image_urls: renderUrls,
-    designer_text: brief,
-    sd_prompt: sdPrompt,
-    report_text: reportText,
-    color_palette: brief?.color_palette ?? null,
-    processing_time: processingTime,
-    ...(succeeded ? {} : { error_message: 'All renders failed' }),
-  }).eq('id', params.generationId);
-
-  await supabaseServer.from('projects').update({
-    status: succeeded ? 'done' : 'error',
-  }).eq('id', params.projectId);
-
+  // FIXED: refund FIRST so a downstream supabase write failure doesn't skip the refund.
+  // Then wrap writes in try/catch so they can't propagate to runGeneration's outer catch.
   if (!succeeded && !params.isAdmin) {
     await refundTokens(params.session.userId, params.roomCount, params.projectId);
+  }
+
+  try {
+    await supabaseServer.from('generations').update({
+      status: succeeded ? 'done' : 'failed',
+      render_urls: renderUrls,
+      image_urls: renderUrls,
+      designer_text: brief,
+      sd_prompt: sdPrompt,
+      report_text: reportText,
+      color_palette: brief?.color_palette ?? null,
+      processing_time: processingTime,
+      ...(succeeded ? {} : { error_message: 'All renders failed' }),
+    }).eq('id', params.generationId);
+
+    await supabaseServer.from('projects').update({
+      status: succeeded ? 'done' : 'error',
+    }).eq('id', params.projectId);
+  } catch (writeErr) {
+    console.error('[photo] Failed to save final status:', writeErr);
   }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function refundTokens(userId: string, amount: number, projectId: string) {
+// FIXED: projectId nullable — early-stage failures (project creation, gen record creation)
+// refund tokens before a project_id exists.
+async function refundTokens(userId: string, amount: number, projectId: string | null) {
   try {
-    // SQL function: spend_user_tokens(user_id, amount) — negative amount restores tokens
+    // SQL function: spend_user_tokens(user_id, amount) — negative amount restores balance
     await supabaseServer.rpc('spend_user_tokens', {
       user_id: userId,
       amount: -amount,

@@ -204,10 +204,21 @@ Return ONLY valid JSON with no explanation, no markdown, no extra text:
 
 // ── Response parser ───────────────────────────────────────────────────────────
 
+// FIXED: was only stripping ``` fences at exact start/end. Now extracts the JSON
+// substring between the first `{` and last `}`, tolerating prose intros, mid-text
+// fences, or anything wrapped around the JSON body.
+function extractJsonBlock(content: string): string {
+  const noFences = content.replace(/```(?:json|JSON)?/g, '').trim();
+  const firstBrace = noFences.indexOf('{');
+  const lastBrace = noFences.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) return noFences;
+  return noFences.slice(firstBrace, lastBrace + 1);
+}
+
 function parseAnalysisResponse(content: string): AnalysisResult | null {
   console.log(`[analyze:parse] Raw response (${content.length} chars):`, content.slice(0, 600));
   try {
-    const cleaned = content.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const cleaned = extractJsonBlock(content);
     const parsed = JSON.parse(cleaned) as { room_count?: unknown; rooms?: unknown[] };
     const count = Number(parsed?.room_count);
     if (!Number.isFinite(count) || count <= 0) {
