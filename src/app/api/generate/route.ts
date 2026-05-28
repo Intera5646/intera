@@ -643,14 +643,46 @@ async function runPhotoPipeline(ctx: {
 }) {
   const { params, brief, sdPrompt, sdNegativePrompt, startTime } = ctx;
   console.log(`[photo] Running ${ANGLE_VARIANTS.length} angle renders for: ${params.roomType}`);
-  console.log('[photo] Using original photo directly, skipping txt2img');
-  console.log('[photo] Sending to adirik, prompt_strength: 0.8');
 
+  // Step 1: MiDaS depth map from original photo
+  let depthMapUrl: string | null = null;
+  try {
+    depthMapUrl = await generateDepthMap(params.planImageUrl);
+    console.log('[photo] MiDaS depth map generated:', depthMapUrl.slice(0, 70));
+  } catch (err) {
+    console.warn('[photo] MiDaS failed, will fall back to adirik:', err instanceof Error ? err.message : err);
+  }
+
+  const useDepthControlNet = Boolean(
+    depthMapUrl && process.env.REPLICATE_CONTROLNET_DEPTH_MODEL?.trim()
+  );
+  console.log(`[photo] path: ${useDepthControlNet ? 'controlnet-depth' : 'adirik (fallback)'}`);
+  if (useDepthControlNet) console.log('[photo] Using controlnet-depth path');
+  else console.log('[photo] Sending to adirik, prompt_strength: 0.8');
+
+  // Step 2: Render × ANGLE_VARIANTS
   const renderResults = await Promise.allSettled(
-    ANGLE_VARIANTS.map((angle) =>
-      generate({
+    ANGLE_VARIANTS.map(async (angle) => {
+      const prompt = `${sdPrompt}, ${angle}`;
+
+      if (useDepthControlNet && depthMapUrl) {
+        try {
+          return await generateWithDepthControlNet({
+            depthMapUrl,
+            prompt,
+            negativePrompt: sdNegativePrompt,
+            numOutputs: 1,
+            guidanceScale: 7.5,
+            numInferenceSteps: 30,
+          });
+        } catch (err) {
+          console.warn(`[photo/${angle}] controlnet-depth failed, falling back to adirik:`, err instanceof Error ? err.message : err);
+        }
+      }
+
+      return generate({
         depthMapUrl: params.planImageUrl,
-        prompt: `${sdPrompt}, ${angle}`,
+        prompt,
         negativePrompt: sdNegativePrompt,
         numOutputs: 1,
         controlWeight: 1.0,
@@ -658,8 +690,8 @@ async function runPhotoPipeline(ctx: {
         anonUuid: cryptoRandomUuid(),
         strength: 0.8,
         guidanceScale: 15,
-      })
-    )
+      });
+    })
   );
 
   const renderUrls = renderResults
