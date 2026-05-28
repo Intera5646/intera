@@ -21,7 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { data, error } = await supabaseServer
     .from('generations')
-    .select('status, render_urls, error_message, designer_text, project_id')
+    .select('status, render_urls, error_message, designer_text, project_id, created_at')
     .eq('id', generationId)
     .single();
 
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ success: false, error: { code: 'NOT_FOUND', message: 'Генерация не найдена.' } }, { status: 404 });
   }
 
-  // FIXED: ownership check — was missing, any authenticated user could poll any generation
+  // Ownership check
   if (session.role !== 'admin') {
     const { data: project, error: projectError } = await supabaseServer
       .from('projects')
@@ -44,13 +44,24 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }
   }
 
-  const progress = data.status === 'done' ? 100 : data.status === 'processing' ? 60 : 20;
+  // Treat stuck pending/processing generations as failed after 10 minutes
+  let effectiveStatus = data.status as string;
+  let effectiveError = data.error_message ?? null;
+  if (effectiveStatus === 'pending' || effectiveStatus === 'processing') {
+    const ageMs = Date.now() - new Date(data.created_at as string).getTime();
+    if (ageMs > 10 * 60 * 1000) {
+      effectiveStatus = 'failed';
+      effectiveError = 'Generation timed out';
+    }
+  }
+
+  const progress = effectiveStatus === 'done' ? 100 : effectiveStatus === 'processing' ? 60 : effectiveStatus === 'pending' ? 20 : 0;
   return NextResponse.json({
     success: true,
-    status: data.status,
+    status: effectiveStatus,
     progress,
     render_urls: data.render_urls ?? [],
-    error_message: data.error_message ?? null,
+    error_message: effectiveError,
     designer_text: data.designer_text ?? null,
   });
 }
