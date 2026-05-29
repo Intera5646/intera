@@ -200,6 +200,8 @@ Valid types: kitchen, bedroom, living, bathroom, wc, hallway, balcony, storage, 
 Valid size_category: small (<10 m²), medium (10-20 m²), large (>20 m²)
 Valid orientation: north, south, east, west, unknown
 
+CRITICAL: Count EVERY enclosed space independently. A typical Russian apartment has 4-8 rooms: living room, 1-3 bedrooms, kitchen, hallway, bathroom, WC, and possibly balcony/storage. If you detect only 1-2 rooms, you have made an error — re-examine the plan carefully, trace every set of walls that forms a closed polygon, and list each one separately.
+
 IMPORTANT: A typical Russian apartment has 4-8 rooms. If you see only 1-2, recount carefully.`;
 
 function buildWallDetailsPrompt(rooms: Array<{ id: string; name: string; width_m: number; length_m: number }>): string {
