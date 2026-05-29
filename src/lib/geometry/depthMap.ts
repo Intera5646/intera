@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { buildScene } from './sceneBuilder';
-import type { GeometryRoom } from './types';
+import type { GeometryRoom, FurnitureObject } from './types';
 import type { WallOpening } from './sceneBuilder';
 
 export interface DepthMapOptions {
@@ -12,6 +12,72 @@ export interface DepthMapOptions {
   fovDeg?: number;
   /** Index into room.suggested_cameras to use (default 0) */
   cameraIndex?: number;
+  /** Furniture to render as solid boxes in the depth map */
+  furniture?: FurnitureObject[];
+}
+
+// ── Furniture AABB helpers ─────────────────────────────────────────────────────
+
+interface FurnitureAABB {
+  xMin: number; xMax: number;
+  yMin: number; yMax: number;
+  zMin: number; zMax: number;
+}
+
+/** Convert a FurnitureObject to an axis-aligned bounding box in room coordinates. */
+function furnitureToAABB(f: FurnitureObject, W: number, L: number): FurnitureAABB | null {
+  const wF  = Math.max(0.1, f.widthM);
+  const dF  = Math.max(0.1, f.depthM);
+  const hF  = Math.max(0.1, f.heightM);
+  const pos = Math.max(0, Math.min(0.95, f.positionAlongWall));
+  const yLo = f.yOffsetM ?? 0;
+  const yHi = yLo + hF;
+
+  switch (f.anchorWallId) {
+    case 'W1': { // back wall Z = L, runs along X
+      const xStart = pos * W;
+      return { xMin: xStart, xMax: Math.min(W, xStart + wF), yMin: yLo, yMax: yHi, zMin: Math.max(0, L - dF), zMax: L };
+    }
+    case 'W3': { // front wall Z = 0, runs along X
+      const xStart = pos * W;
+      return { xMin: xStart, xMax: Math.min(W, xStart + wF), yMin: yLo, yMax: yHi, zMin: 0, zMax: Math.min(L, dF) };
+    }
+    case 'W2': { // right wall X = W, runs along Z
+      const zStart = pos * L;
+      return { xMin: Math.max(0, W - dF), xMax: W, yMin: yLo, yMax: yHi, zMin: zStart, zMax: Math.min(L, zStart + wF) };
+    }
+    case 'W4': { // left wall X = 0, runs along Z
+      const zStart = pos * L;
+      return { xMin: 0, xMax: Math.min(W, dF), yMin: yLo, yMax: yHi, zMin: zStart, zMax: Math.min(L, zStart + wF) };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Slab-method ray-AABB intersection.
+ * Returns the smallest positive t where the ray enters the box, or Infinity if no hit.
+ */
+function rayIntersectsAABB(
+  ox: number, oy: number, oz: number,
+  dx: number, dy: number, dz: number,
+  box: FurnitureAABB,
+): number {
+  // Use safe reciprocals so parallel rays produce ±Infinity (handled correctly by min/max)
+  const idx = Math.abs(dx) < EPS ? (dx >= 0 ? 1e15 : -1e15) : 1 / dx;
+  const idy = Math.abs(dy) < EPS ? (dy >= 0 ? 1e15 : -1e15) : 1 / dy;
+  const idz = Math.abs(dz) < EPS ? (dz >= 0 ? 1e15 : -1e15) : 1 / dz;
+
+  const tx1 = (box.xMin - ox) * idx, tx2 = (box.xMax - ox) * idx;
+  const ty1 = (box.yMin - oy) * idy, ty2 = (box.yMax - oy) * idy;
+  const tz1 = (box.zMin - oz) * idz, tz2 = (box.zMax - oz) * idz;
+
+  const tNear = Math.max(Math.min(tx1, tx2), Math.min(ty1, ty2), Math.min(tz1, tz2));
+  const tFar  = Math.min(Math.max(tx1, tx2), Math.max(ty1, ty2), Math.max(tz1, tz2));
+
+  if (tFar < 0.001 || tNear > tFar) return Infinity;
+  return tNear > 0.001 ? tNear : Infinity;
 }
 
 const EPS = 1e-9;
@@ -62,6 +128,11 @@ export async function generateDepthMapBuffer(
 
   const scene = buildScene(room, camIndex);
   const { width_m: W, length_m: L, height_m: H, camera: cam, openings } = scene;
+
+  // Pre-compute furniture AABBs once (outside the pixel loop)
+  const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
+    .map(f => furnitureToAABB(f, W, L))
+    .filter((b): b is FurnitureAABB => b !== null);
 
   // Normalisation: distances beyond this map to 0 (black / far)
   const maxDist = Math.sqrt(W * W + H * H + L * L) * 1.1;
@@ -151,6 +222,12 @@ export async function generateDepthMapBuffer(
             if (!inOpening(openings, 0, W, W, hy, hz)) minT = t;
           }
         }
+      }
+
+      // ── Furniture boxes  (nearest AABB wins) ──────────────────────────────
+      for (let fi = 0; fi < furnitureBoxes.length; fi++) {
+        const t = rayIntersectsAABB(ox, oy, oz, dx, dy, dz, furnitureBoxes[fi]);
+        if (t < minT) minT = t;
       }
 
       // ── Depth → luminance  (near=bright, far=dark) ────────────────────────

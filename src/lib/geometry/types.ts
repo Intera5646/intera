@@ -65,3 +65,25 @@ export interface ApartmentGeometry {
   };
   rooms: GeometryRoom[];
 }
+
+/** A piece of furniture anchored to a wall, represented as an AABB in room space. */
+export interface FurnitureObject {
+  id: string;
+  /** Human-readable type: "sofa", "bed", "wardrobe", "kitchen_run", etc. */
+  type: string;
+  /** Wall the back of the furniture is against: W1 (back), W2 (right), W3 (front), W4 (left) */
+  anchorWallId: string;
+  /** 0.0 = left/near end of wall, 1.0 = right/far end */
+  positionAlongWall: number;
+  /** Size along the anchored wall (metres) */
+  widthM: number;
+  /** How far the piece protrudes into the room (metres) */
+  depthM: number;
+  /** Height of the piece from the floor (metres) */
+  heightM: number;
+  /** Vertical offset from the floor — for wall-mounted items (e.g. upper cabinets) */
+  yOffsetM?: number;
+  /** Optional description of what the piece faces */
+  facing?: string;
+}
+

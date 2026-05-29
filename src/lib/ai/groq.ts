@@ -1,8 +1,9 @@
 import Groq from 'groq-sdk';
-import type { GeometryRoom, RoomInfo } from '../geometry/types';
+import type { GeometryRoom, RoomInfo, FurnitureObject } from '../geometry/types';
 
 // Re-export so existing callers (`import { RoomInfo } from '…/groq'`) keep working.
 export type { RoomInfo } from '../geometry/types';
+export type { FurnitureObject } from '../geometry/types';
 
 let groqClient: Groq | null = null;
 
@@ -345,6 +346,7 @@ export interface WallAwareBriefParams {
   budget: string;
   wishes?: string;
   cameraIndex?: number;
+  furniture?: FurnitureObject[];
 }
 
 // Negative prompt tuned for Flux Depth Pro (geometry comes from depth map,
@@ -399,6 +401,18 @@ function lightingFromCamera(cameraWallId: string, windowWallIds: string[]): stri
   return 'soft natural side lighting';
 }
 
+// Maps wall IDs to human-readable camera-relative directions for the prompt.
+const WALL_NAMES: Record<string, string> = {
+  W1: 'back wall', W2: 'right wall', W3: 'front wall', W4: 'left wall',
+};
+
+function describeFurniture(furniture: FurnitureObject[]): string {
+  if (!furniture.length) return '';
+  return furniture
+    .map(f => `${f.type.replace(/_/g, ' ')} against the ${WALL_NAMES[f.anchorWallId] ?? f.anchorWallId}`)
+    .join(', ');
+}
+
 // Deterministic fallback — used when Groq is unavailable or returns bad JSON.
 function wallAwareFallback(params: WallAwareBriefParams, lightingDesc: string): { prompt: string; negativePrompt: string } {
   const roomTypeEn = ROOM_TYPE_EN[params.room.type] ?? params.room.type;
@@ -425,6 +439,7 @@ function wallAwareFallback(params: WallAwareBriefParams, lightingDesc: string): 
     'cinematic depth of field',
     'no people',
   ];
+  if (params.furniture?.length) parts.push(`fully furnished: ${describeFurniture(params.furniture)}`);
   if (params.wishes?.trim()) parts.push(params.wishes.slice(0, 120));
 
   return { prompt: parts.join(', '), negativePrompt: FLUX_NEGATIVE_PROMPT };
@@ -460,6 +475,10 @@ export async function buildWallAwareBrief(
     'The room geometry is already encoded in the depth map — your prompt should focus on materials, ' +
     'lighting atmosphere, style mood, and camera framing. Write in English only. Return JSON only.';
 
+  const furnitureClause = params.furniture?.length
+    ? `Furniture already placed in scene: ${describeFurniture(params.furniture)}.\n`
+    : '';
+
   const userPrompt =
     `Room: ${roomTypeEn}\n` +
     `Dimensions: ${width_m.toFixed(1)} × ${length_m.toFixed(1)} m, ${sizeTag}, ${heightTag}\n` +
@@ -468,10 +487,11 @@ export async function buildWallAwareBrief(
     `Camera angle: ${camDesc}\n` +
     `Style: ${style}\n` +
     `Budget tier: ${budget}\n` +
+    furnitureClause +
     (wishes?.trim() ? `Client wishes: ${wishes.slice(0, 200)}\n` : '') +
     `\nReturn JSON:\n` +
     `{\n` +
-    `  "prompt": "photorealistic interior photograph, [room], [style], [materials], [lighting], [camera], 8K, architectural photography, no people",\n` +
+    `  "prompt": "photorealistic interior photograph, [room], [style], [materials], [furniture list with positions], [lighting], [camera], 8K, architectural photography, no people",\n` +
     `  "negative_prompt": "${FLUX_NEGATIVE_PROMPT}"\n` +
     `}`;
 
@@ -628,4 +648,152 @@ ${wishesClause}
   ].join('\n\n');
 
   return { designerText, reportText };
+}
+
+// ── Room furniture planner for BTI v2 depth map ───────────────────────────────
+// One Groq call per room. Returns FurnitureObject[] anchored to walls.
+// If Groq fails, returns a hardcoded default set for the room type.
+
+const MANDATORY_FURNITURE: Record<string, string> = {
+  living:      'sofa (against longest solid wall, facing center), tv_unit (wall opposite sofa), shelving (solid wall), floor_lamp (corner)',
+  bedroom:     'bed (headboard against solid wall), 2x nightstand (flanking bed), wardrobe (side or opposite wall)',
+  kitchen:     'kitchen_run (full counter: fridge → sink → stove along one wall), upper_cabinets (above counter)',
+  bathroom:    'bathtub or shower (against wall), vanity_sink (against wall), toilet (corner)',
+  wc:          'toilet (against back wall), corner_sink (corner), mirror (above sink)',
+  hallway:     'wardrobe or coat_storage (against wall), console_table (against wall), mirror',
+  balcony:     'bistro_table (center), 2x chair',
+  storage:     'shelving (along walls)',
+  studio_zone: 'sofa (living zone), kitchen_run (kitchen zone along wall), fridge',
+};
+
+const FALLBACK_FURNITURE: Record<string, FurnitureObject[]> = {
+  living: [
+    { id: 'F1', type: 'sofa',       anchorWallId: 'W1', positionAlongWall: 0.10, widthM: 2.1, depthM: 0.90, heightM: 0.85 },
+    { id: 'F2', type: 'tv_unit',    anchorWallId: 'W4', positionAlongWall: 0.30, widthM: 1.4, depthM: 0.45, heightM: 0.50 },
+    { id: 'F3', type: 'shelving',   anchorWallId: 'W2', positionAlongWall: 0.50, widthM: 0.8, depthM: 0.30, heightM: 2.00 },
+  ],
+  bedroom: [
+    { id: 'F1', type: 'bed',        anchorWallId: 'W1', positionAlongWall: 0.20, widthM: 1.6, depthM: 2.00, heightM: 0.55 },
+    { id: 'F2', type: 'nightstand', anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 0.5, depthM: 0.45, heightM: 0.55 },
+    { id: 'F3', type: 'wardrobe',   anchorWallId: 'W2', positionAlongWall: 0.60, widthM: 1.2, depthM: 0.60, heightM: 2.20 },
+  ],
+  kitchen: [
+    { id: 'F1', type: 'kitchen_run', anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 3.2, depthM: 0.60, heightM: 0.90 },
+    { id: 'F2', type: 'fridge',      anchorWallId: 'W2', positionAlongWall: 0.05, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
+  ],
+  bathroom: [
+    { id: 'F1', type: 'bathtub',     anchorWallId: 'W1', positionAlongWall: 0.05, widthM: 1.70, depthM: 0.75, heightM: 0.60 },
+    { id: 'F2', type: 'vanity_sink', anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 0.85, depthM: 0.55, heightM: 0.85 },
+    { id: 'F3', type: 'toilet',      anchorWallId: 'W4', positionAlongWall: 0.10, widthM: 0.40, depthM: 0.65, heightM: 0.80 },
+  ],
+  wc: [
+    { id: 'F1', type: 'toilet',      anchorWallId: 'W1', positionAlongWall: 0.30, widthM: 0.40, depthM: 0.65, heightM: 0.80 },
+    { id: 'F2', type: 'corner_sink', anchorWallId: 'W4', positionAlongWall: 0.05, widthM: 0.40, depthM: 0.40, heightM: 0.80 },
+  ],
+  hallway: [
+    { id: 'F1', type: 'wardrobe',       anchorWallId: 'W2', positionAlongWall: 0.20, widthM: 1.2, depthM: 0.55, heightM: 2.20 },
+    { id: 'F2', type: 'console_table',  anchorWallId: 'W4', positionAlongWall: 0.30, widthM: 0.8, depthM: 0.35, heightM: 0.85 },
+  ],
+  balcony: [
+    { id: 'F1', type: 'bistro_table', anchorWallId: 'W1', positionAlongWall: 0.30, widthM: 0.7, depthM: 0.70, heightM: 0.75 },
+  ],
+  storage: [
+    { id: 'F1', type: 'shelving', anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 2.5, depthM: 0.40, heightM: 2.20 },
+    { id: 'F2', type: 'shelving', anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 1.2, depthM: 0.40, heightM: 2.20 },
+  ],
+  studio_zone: [
+    { id: 'F1', type: 'sofa',        anchorWallId: 'W1', positionAlongWall: 0.10, widthM: 2.1, depthM: 0.90, heightM: 0.85 },
+    { id: 'F2', type: 'kitchen_run', anchorWallId: 'W2', positionAlongWall: 0.00, widthM: 2.5, depthM: 0.60, heightM: 0.90 },
+    { id: 'F3', type: 'fridge',      anchorWallId: 'W2', positionAlongWall: 0.80, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
+  ],
+};
+
+function validateFurnitureResponse(raw: unknown, room: GeometryRoom): FurnitureObject[] {
+  const { width_m: W, length_m: L } = room.dimensions;
+  if (!Array.isArray(raw)) return [];
+  return (raw as unknown[]).slice(0, 12).flatMap((item: unknown, idx) => {
+    const f = (item ?? {}) as Record<string, unknown>;
+    const wallId = String(f.anchorWallId ?? '');
+    if (!['W1', 'W2', 'W3', 'W4'].includes(wallId)) return [];
+    const wallLen = ['W1', 'W3'].includes(wallId) ? W : L;
+    const pos     = Math.max(0, Math.min(0.9, Number(f.positionAlongWall ?? 0)));
+    const widthM  = Math.max(0.2, Math.min(wallLen * 0.95, Number(f.widthM  ?? 1.0)));
+    const depthM  = Math.max(0.1, Math.min(2.5,             Number(f.depthM  ?? 0.5)));
+    const heightM = Math.max(0.1, Math.min(2.5,             Number(f.heightM ?? 1.0)));
+    const obj: FurnitureObject = {
+      id:                String(f.id ?? `F${idx + 1}`),
+      type:              String(f.type ?? 'furniture'),
+      anchorWallId:      wallId,
+      positionAlongWall: pos,
+      widthM,
+      depthM,
+      heightM,
+    };
+    if (f.facing) obj.facing = String(f.facing);
+    return [obj];
+  });
+}
+
+export async function buildRoomFurniturePlan(room: GeometryRoom): Promise<FurnitureObject[]> {
+  const { width_m: W, length_m: L, height_m: H } = room.dimensions;
+
+  const wallLines = room.walls.map(wall => {
+    const featDesc = wall.features.length === 0
+      ? 'no features'
+      : wall.features.map(f =>
+          `${f.type} at ${f.position_from_start_m.toFixed(1)}m from start, width ${f.width_m.toFixed(1)}m`
+        ).join('; ');
+    return `  ${wall.id} (${wall.length_m.toFixed(1)}m): ${featDesc}`;
+  }).join('\n');
+
+  const mandatory = MANDATORY_FURNITURE[room.type] ?? 'appropriate furniture for this room type';
+  // Camera is at W3 — furniture there would occlude the viewpoint
+  const camWall = room.suggested_cameras[0]?.camera_at_wall_id ?? 'W3';
+
+  const userPrompt =
+    `Place furniture in this room for a photorealistic 3D depth map render.\n\n` +
+    `Room type: ${room.type} (${room.name})\n` +
+    `Dimensions: W=${W.toFixed(1)}m × L=${L.toFixed(1)}m × H=${H.toFixed(1)}m\n` +
+    `Walls (ID, length, features):\n${wallLines}\n\n` +
+    `Wall system: W1=back(Z far), W2=right(X far), W3=front(Z near), W4=left(X=0)\n` +
+    `positionAlongWall: 0.0=start of wall, 1.0=end of wall\n\n` +
+    `Required furniture: ${mandatory}\n\n` +
+    `Rules:\n` +
+    `1. Never place furniture blocking a door — keep door openings clear (check features above)\n` +
+    `2. Never place furniture over a window\n` +
+    `3. Leave at least 0.8m walking clearance between pieces\n` +
+    `4. positionAlongWall + widthM / wallLength must be ≤ 1.0 (furniture must fit on wall)\n` +
+    `5. Do not place furniture against ${camWall} (camera is there)\n\n` +
+    `Return JSON: { "furniture": [ ... ] }\n` +
+    `Each item: { "id":"F1", "type":"sofa", "anchorWallId":"W1", "positionAlongWall":0.1, "widthM":2.1, "depthM":0.9, "heightM":0.85, "facing":"center" }\n` +
+    `Realistic sizes: sofa~2.0×0.9×0.85, bed~1.6×2.0×0.55, wardrobe~1.2×0.6×2.2, fridge~0.65×0.65×1.85, toilet~0.4×0.65×0.8, bathtub~1.7×0.75×0.6, vanity_sink~0.85×0.55×0.85, kitchen_run~[wall_width]×0.6×0.9`;
+
+  try {
+    const completion = await getGroq().chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: 'You are an interior designer placing furniture. Return only valid JSON.' },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.3,
+      max_tokens: 800,
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? '{}';
+    const parsed = JSON.parse(raw) as { furniture?: unknown };
+    const validated = validateFurnitureResponse(parsed.furniture, room);
+
+    if (validated.length > 0) {
+      console.log(`[designer] ${room.name}: planned ${validated.length} furniture objects`);
+      return validated;
+    }
+    console.warn(`[designer] ${room.name}: Groq returned 0 valid objects — using fallback`);
+  } catch (err) {
+    console.warn(`[designer] ${room.name}: Groq failed — using fallback:`, err instanceof Error ? err.message : err);
+  }
+
+  const fallback = FALLBACK_FURNITURE[room.type] ?? FALLBACK_FURNITURE['living'] ?? [];
+  console.log(`[designer] ${room.name}: fallback furniture — ${fallback.length} objects`);
+  return fallback;
 }

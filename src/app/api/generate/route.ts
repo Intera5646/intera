@@ -15,6 +15,7 @@ import {
   buildRoomPrompts,
   buildWallAwareBrief,
   buildApartmentReport,
+  buildRoomFurniturePlan,
   formatReportText,
   type DesignBrief,
   type DesignerText,
@@ -832,11 +833,15 @@ async function runBtiRoomV2(opts: {
   const { room, params } = opts;
   const camIdx = 0;
 
-  // Step A: generate procedural depth map
-  console.log(`[BTI-v2:${room.name}] Generating depth map`);
-  const depthPng = await generateDepthMapBuffer(room, { width: 512, height: 512, cameraIndex: camIdx });
+  // Step A: plan furniture with Groq designer
+  console.log(`[BTI-v2:${room.name}] Planning furniture`);
+  const furniture = await buildRoomFurniturePlan(room);
 
-  // Step B: upload to depth-maps bucket
+  // Step B: generate procedural depth map with furniture boxes
+  console.log(`[BTI-v2:${room.name}] Generating depth map (${furniture.length} furniture objects)`);
+  const depthPng = await generateDepthMapBuffer(room, { width: 512, height: 512, cameraIndex: camIdx, furniture });
+
+  // Step C: upload to depth-maps bucket
   const depthPath = `${params.projectId}/${params.generationId}_${room.id}.png`;
   const { data: uploadData, error: uploadErr } = await supabaseServer.storage
     .from('depth-maps')
@@ -849,16 +854,17 @@ async function runBtiRoomV2(opts: {
   const controlImageUrl = urlData.publicUrl;
   console.log(`[BTI-v2:${room.name}] Depth map →`, controlImageUrl.slice(0, 80));
 
-  // Step C: build wall-aware Groq prompt
+  // Step D: build wall-aware Groq prompt describing the placed furniture
   const { prompt, negativePrompt } = await buildWallAwareBrief({
     room,
     style: params.style,
     budget: params.budget,
     wishes: params.wishes || undefined,
     cameraIndex: camIdx,
+    furniture,
   });
 
-  // Step D: call Flux Depth Pro (1 render)
+  // Step E: call Flux Depth Pro (controlStrength 0.55 — depth map has furniture, prompt reinforces it)
   console.log(`[BTI-v2:${room.name}] Calling Flux Depth Pro`);
   const renderUrls = await generateFluxDepthPro({
     controlImage: controlImageUrl,
@@ -866,7 +872,7 @@ async function runBtiRoomV2(opts: {
     negativePrompt,
     numOutputs: 1,
     guidanceScale: 3.5,
-    controlStrength: 0.85,
+    controlStrength: 0.55,
   });
   console.log(`[BTI-v2:${room.name}] ${renderUrls.length} render(s) returned`);
 
