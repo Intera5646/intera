@@ -743,7 +743,8 @@ interface CameraMetaEntry {
   facing_wall_id: string;
   description: string;
   room_id: string;
-  room_name: string; // FIX 7: display room label in UI
+  room_name: string;       // FIX 7: display room label in UI
+  room_dimensions: string; // e.g. "5.6м × 5.2м" — shown as overlay label
   depth_map_url: string;
 }
 
@@ -905,6 +906,8 @@ async function runBtiRoomV2(opts: {
   console.log(`[BTI-v2:${room.name}] ${renderUrls.length} render(s) returned`);
 
   const cam = sanitizedRoom.suggested_cameras[camIdx];
+  // Label uses the ORIGINAL room dimensions (not the clamped values)
+  const roomDimensions = `${room.dimensions.width_m.toFixed(1)}м × ${room.dimensions.length_m.toFixed(1)}м`;
   return {
     renderUrls,
     cameraMeta: {
@@ -913,7 +916,8 @@ async function runBtiRoomV2(opts: {
       facing_wall_id:    cam?.facing_wall_id    ?? 'W1',
       description:       cam?.description       ?? '',
       room_id:           room.id,
-      room_name:         room.name, // FIX 7
+      room_name:         room.name,      // FIX 7
+      room_dimensions:   roomDimensions, // overlay label
       depth_map_url:     controlImageUrl,
     },
   };

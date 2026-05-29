@@ -22,7 +22,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
       initialRenderUrls={data.render_urls ?? []}
       initialError={data.error_message ?? null}
       initialDesignerText={data.designer_text ?? null}
-      initialCameraMetadata={(data as Record<string, unknown>).camera_metadata as { room_name?: string }[] | null ?? null}
+      initialCameraMetadata={(data as Record<string, unknown>).camera_metadata as { room_name?: string; room_dimensions?: string }[] | null ?? null}
     />
   );
 }

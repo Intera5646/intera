@@ -24,6 +24,7 @@ type DesignerText = {
 
 type CameraMetaEntry = {
   room_name?: string;
+  room_dimensions?: string;
   camera_index?: number;
   room_id?: string;
 };
@@ -251,7 +252,14 @@ export default function ProjectStatus({
                   }}
                 >
                   {renderUrls.length > 0 ? (
-                    renderUrls.map((url, idx) => (
+                    renderUrls.map((url, idx) => {
+                      const meta = cameraMetadata?.[idx];
+                      const roomLabel = meta?.room_name
+                        ? meta.room_dimensions
+                          ? `${meta.room_name} — ${meta.room_dimensions}`
+                          : meta.room_name
+                        : null;
+                      return (
                       <div
                         key={`${url}-${idx}`}
                         style={{
@@ -262,33 +270,19 @@ export default function ProjectStatus({
                           minHeight: 160,
                         }}
                       >
-                        {cameraMetadata?.[idx]?.room_name && (
-                          <div
-                            style={{
-                              padding: '5px 10px',
-                              fontSize: 11,
-                              fontWeight: 600,
-                              color: 'var(--brand-primary)',
-                              background: 'rgba(255,255,255,0.92)',
-                              borderBottom: '1px solid rgba(13,27,42,0.08)',
-                              letterSpacing: '0.02em',
-                            }}
-                          >
-                            {cameraMetadata[idx].room_name}
-                          </div>
-                        )}
                         <a href={url} target="_blank" rel="noopener noreferrer">
                           <img
                             src={url}
-                            alt={cameraMetadata?.[idx]?.room_name ?? `Рендер ${idx + 1}`}
+                            alt={roomLabel ?? `Рендер ${idx + 1}`}
                             style={{ width: '100%', display: 'block' }}
                           />
                         </a>
+                        {/* AI badge — top-right so it never overlaps the room label */}
                         <div
                           style={{
                             position: 'absolute',
-                            bottom: 8,
-                            left: 8,
+                            top: 8,
+                            right: 8,
                             fontSize: 10,
                             color: 'rgba(255,255,255,0.85)',
                             background: 'rgba(0,0,0,0.4)',
@@ -298,8 +292,29 @@ export default function ProjectStatus({
                         >
                           Создано с помощью ИИ
                         </div>
+                        {/* Room name + dimensions overlay bar at the bottom */}
+                        {roomLabel && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              padding: '8px 12px',
+                              background: 'rgba(0,0,0,0.55)',
+                              color: '#fff',
+                              fontSize: 14,
+                              fontWeight: 600,
+                              letterSpacing: '0.01em',
+                              textShadow: '0 1px 2px rgba(0,0,0,0.4)',
+                            }}
+                          >
+                            {roomLabel}
+                          </div>
+                        )}
                       </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div
                       style={{
