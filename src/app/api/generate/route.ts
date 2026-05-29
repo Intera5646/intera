@@ -760,7 +760,10 @@ async function runBtiPipelineV2(ctx: {
   console.log(`[BTI-v2] Processing ${geometry.rooms.length} rooms in parallel — 1 camera, 1 render each`);
 
   const roomResults = await Promise.allSettled(
-    geometry.rooms.map(room => runBtiRoomV2({ room, params }))
+    geometry.rooms.map(async (room, index) => {
+      if (index > 0) await new Promise(r => setTimeout(r, index * 1000));
+      return runBtiRoomV2({ room, params });
+    })
   );
 
   const allRenderUrls: string[] = [];

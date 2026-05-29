@@ -50,9 +50,11 @@ function extractUrls(output: unknown): string[] {
   return items.map((item: unknown) => {
     if (typeof item === 'string') return item;
     const obj = item as Record<string, unknown>;
-    if (typeof obj?.url === 'function') return (obj.url as () => string)();
-    if (typeof obj?.url === 'string') return obj.url;
-    return String(item);
+    // Replicate FileOutput: .url() returns a URL object, not a string
+    if (item && typeof obj.url === 'function') return (obj.url as () => { toString(): string })().toString();
+    if (item && typeof obj.url === 'string') return obj.url;
+    if (item) return String(item);
+    return '';
   }).filter(Boolean);
 }
 
@@ -250,21 +252,36 @@ export async function generateFluxDepthPro(params: FluxDepthProParams): Promise<
     '| control_image:', params.controlImage.slice(0, 80),
   );
 
+  const fluxInput = {
+    prompt:              params.prompt,
+    control_image:       params.controlImage,
+    negative_prompt:     params.negativePrompt ?? '',
+    num_outputs:         numOutputs,
+    num_inference_steps: inferenceSteps,
+    guidance_scale:      guidanceScale,
+    control_strength:    controlStrength,
+    output_format:       'png',
+    output_quality:      90,
+  };
+
   // The Replicate SDK routes calls without a version SHA to the official
   // /v1/models/<owner>/<name>/predictions endpoint automatically.
-  const output = await client.run('black-forest-labs/flux-depth-pro' as `${string}/${string}`, {
-    input: {
-      prompt:           params.prompt,
-      control_image:    params.controlImage,
-      negative_prompt:  params.negativePrompt ?? '',
-      num_outputs:      numOutputs,
-      num_inference_steps: inferenceSteps,
-      guidance_scale:   guidanceScale,
-      control_strength: controlStrength,
-      output_format:    'png',
-      output_quality:   90,
-    },
-  });
+  let output: unknown;
+  try {
+    output = await client.run('black-forest-labs/flux-depth-pro' as `${string}/${string}`, { input: fluxInput });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const is429 = msg.includes('429') || /rate.?limit|too.?many.?requests/i.test(msg);
+    if (is429) {
+      const afterMatch = msg.match(/retry.?after[:\s]+(\d+)/i);
+      const waitSec = afterMatch ? parseInt(afterMatch[1], 10) : 10;
+      console.warn(`[flux-depth-pro] 429 rate limit — retrying after ${waitSec}s`);
+      await new Promise(r => setTimeout(r, waitSec * 1000));
+      output = await client.run('black-forest-labs/flux-depth-pro' as `${string}/${string}`, { input: fluxInput });
+    } else {
+      throw err;
+    }
+  }
 
   if (!output) {
     throw new Error('generateFluxDepthPro: Replicate returned no output');
