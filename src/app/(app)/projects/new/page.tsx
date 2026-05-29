@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { ApartmentGeometry } from '../../../../lib/geometry/types';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -69,6 +70,33 @@ const LIGHTING_OPTS: SelectOption[] = [
   { id: 'mixed', label: 'Смешанный' },
   { id: 'natural', label: 'Много естественного света' },
 ];
+
+const CONFIRM_ROOM_TYPE_LABELS: Record<string, string> = {
+  living: 'Гостиная',
+  bedroom: 'Спальня',
+  kitchen: 'Кухня',
+  bathroom: 'Ванная',
+  wc: 'Туалет',
+  hallway: 'Прихожая',
+  balcony: 'Балкон',
+  storage: 'Кладовая',
+  studio_zone: 'Студия',
+};
+
+const CONFIRM_ROOM_TYPE_COLORS: Record<string, string> = {
+  living: '#C8E6C9',
+  bedroom: '#BBDEFB',
+  kitchen: '#FFECB3',
+  bathroom: '#E1BEE7',
+  wc: '#F3E5F5',
+  hallway: '#EEEEEE',
+  balcony: '#B2EBF2',
+  storage: '#D7CCC8',
+  studio_zone: '#E8F5E9',
+};
+
+const CONFIRM_ROOM_TYPE_OPTIONS: SelectOption[] = Object.entries(CONFIRM_ROOM_TYPE_LABELS)
+  .map(([id, label]) => ({ id, label }));
 
 const TOTAL_STEPS = 5; // 4 main + 1 confirmation
 const MAIN_STEPS = 4;
@@ -294,6 +322,7 @@ export default function NewProjectPage() {
   const [btiRooms, setBtiRooms] = useState<string[]>([]);
   const [btiRoomsJson, setBtiRoomsJson] = useState('');
   const [btiGeometryJson, setBtiGeometryJson] = useState<Record<string, unknown> | null>(null);
+  const [editableGeometry, setEditableGeometry] = useState<ApartmentGeometry | null>(null);
   const [btiAnalysisError, setBtiAnalysisError] = useState(false);
   const [dragPhoto, setDragPhoto] = useState(false);
   const [dragBti, setDragBti] = useState(false);
@@ -337,15 +366,10 @@ export default function NewProjectPage() {
   const btiCost = hasBtiFile ? (btiRoomCount ?? 1) : 0;
   const tokenCost = photoCost + btiCost;
 
-  // Which actual step numbers exist in the flow (step 2 skipped when BTI present)
-  const hasBtiFlow = hasBtiFile;
-  const skipStep2 = hasBtiFlow;
-
-  // Visual progress 1–4 regardless of skipped steps
+  // Visual progress 1–4 regardless of step number
   const visualProgress = (() => {
     if (step >= TOTAL_STEPS) return MAIN_STEPS;
-    const map = skipStep2 ? [1, 3, 4] : [1, 2, 3, 4];
-    const idx = map.indexOf(step);
+    const idx = [1, 2, 3, 4].indexOf(step);
     return idx >= 0 ? idx + 1 : 1;
   })();
 
@@ -358,6 +382,10 @@ export default function NewProjectPage() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (btiGeometryJson) setEditableGeometry(btiGeometryJson as unknown as ApartmentGeometry);
+  }, [btiGeometryJson]);
 
   // ── Fetch balance on confirmation step ────────────────────────────────────
 
@@ -422,6 +450,8 @@ export default function NewProjectPage() {
     setBtiRoomCount(null);
     setBtiRooms([]);
     setBtiRoomsJson('');
+    setBtiGeometryJson(null);
+    setEditableGeometry(null);
     setBtiAnalysisError(false);
     setBtiAnalyzing(false);
     const entry = makeEntry(file);
@@ -482,6 +512,8 @@ export default function NewProjectPage() {
     setBtiRoomCount(null);
     setBtiRooms([]);
     setBtiRoomsJson('');
+    setBtiGeometryJson(null);
+    setEditableGeometry(null);
     setBtiAnalyzing(false);
     setBtiAnalysisError(false);
   };
@@ -509,16 +541,13 @@ export default function NewProjectPage() {
       const hasAnyFile = uploadedPhotos.length > 0 || hasBtiFile;
       if (!hasAnyFile || !apartmentType || btiAnalyzing) return;
     }
-    const nextStep = step === 1 && skipStep2 ? 3
-      : step < TOTAL_STEPS ? step + 1
-      : null;
+    const nextStep = step < TOTAL_STEPS ? step + 1 : null;
     if (nextStep) setStep(nextStep);
     else void confirmGeneration();
   };
 
   const handleBack = () => {
-    if (step === 3 && skipStep2) setStep(1);
-    else setStep((s) => Math.max(1, s - 1));
+    setStep((s) => Math.max(1, s - 1));
   };
 
   // ── Confirm generation ────────────────────────────────────────────────────
@@ -567,7 +596,7 @@ export default function NewProjectPage() {
             plan_image_url: btiEntry.uploadedUrl,
             room_count: btiCost,
             detected_rooms_json: btiRoomsJson || undefined,
-            geometry_json: btiGeometryJson ?? undefined,
+            geometry_json: (editableGeometry as unknown as Record<string, unknown>) ?? btiGeometryJson ?? undefined,
           }),
         });
         const d = await r.json();
@@ -742,8 +771,36 @@ export default function NewProjectPage() {
           </section>
         )}
 
-        {/* ── STEP 2: Room types (skipped if BTI present) ───────────────────── */}
-        {step === 2 && !skipStep2 && (
+        {/* ── STEP 2 (BTI): Confirm detected rooms ─────────────────────────── */}
+        {step === 2 && hasBtiFile && editableGeometry && (
+          <>
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              style={{ alignSelf: 'flex-start', background: 'none', border: 'none', color: 'var(--muted)', fontSize: 13, cursor: 'pointer', padding: 0, marginBottom: 4 }}
+            >
+              ← Загрузить другой план
+            </button>
+            <ConfirmStep
+              geometry={editableGeometry}
+              planImageUrl={btiEntry?.uploadedUrl ?? btiEntry?.previewUrl ?? ''}
+              onChange={(updated) => setEditableGeometry(updated)}
+            />
+          </>
+        )}
+        {step === 2 && hasBtiFile && !editableGeometry && (
+          <section style={{ display: 'grid', gap: 16 }}>
+            <div className="serif" style={{ fontSize: 24, fontStyle: 'italic', color: 'var(--ink)' }}>Анализ плана</div>
+            <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
+              {btiAnalysisError
+                ? 'Не удалось точно определить комнаты. Генерация продолжится с параметрами по умолчанию.'
+                : 'План получен. Нажмите «Далее» для продолжения.'}
+            </div>
+          </section>
+        )}
+
+        {/* ── STEP 2 (Photos): Room type per photo ─────────────────────────── */}
+        {step === 2 && !hasBtiFile && (
           <section style={{ display: 'grid', gap: 20 }}>
             <div>
               <div className="serif" style={{ fontSize: 24, fontStyle: 'italic', color: 'var(--ink)' }}>Тип помещения</div>
@@ -755,14 +812,12 @@ export default function NewProjectPage() {
             </div>
 
             {uploadedPhotos.length <= 1 ? (
-              // Single selector
               <AccordionSelect
                 options={ROOM_TYPES}
                 value={photoRoomTypes[uploadedPhotos[0]?.id] ?? 'living_room'}
                 onChange={(v) => uploadedPhotos[0] && setPhotoRoomTypes((p) => ({ ...p, [uploadedPhotos[0].id]: v }))}
               />
             ) : (
-              // Multiple selectors with thumbnails
               <div style={{ display: 'grid', gap: 14 }}>
                 {uploadedPhotos.map((entry, idx) => (
                   <div key={entry.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 14, border: '1px solid rgba(34,30,26,0.1)', background: '#fff' }}>
@@ -932,5 +987,186 @@ function ConfRow({ label, value, valueColor }: { label: string; value: string; v
       <span style={{ fontSize: 13, color: 'var(--muted)' }}>{label}</span>
       <span style={{ fontSize: 13, fontWeight: 700, color: valueColor ?? 'var(--ink)' }}>{value}</span>
     </div>
+  );
+}
+
+// ── ConfirmStep ───────────────────────────────────────────────────────────────
+
+function RoomSvgThumb({ room }: { room: ApartmentGeometry['rooms'][number] }) {
+  const W_VP = 90, H_VP = 70;
+  const w = Math.max(0.5, room.dimensions.width_m || 3);
+  const l = Math.max(0.5, room.dimensions.length_m || 3);
+  const ratio = w / l;
+  let rectW: number, rectH: number;
+  if (ratio > W_VP / H_VP) {
+    rectW = W_VP - 6;
+    rectH = rectW / ratio;
+  } else {
+    rectH = H_VP - 6;
+    rectW = rectH * ratio;
+  }
+  const x = (W_VP - rectW) / 2;
+  const y = (H_VP - rectH) / 2;
+  const fill = CONFIRM_ROOM_TYPE_COLORS[room.type] ?? '#E0E0E0';
+  return (
+    <svg width={W_VP} height={H_VP} viewBox={`0 0 ${W_VP} ${H_VP}`}>
+      <rect x={x} y={y} width={rectW} height={rectH} rx="3" fill={fill} stroke="rgba(0,0,0,0.15)" strokeWidth="1" />
+      <text x={W_VP / 2} y={y + rectH / 2 + 4} textAnchor="middle" fontSize="9" fill="rgba(0,0,0,0.55)">
+        {w.toFixed(1)}×{l.toFixed(1)}
+      </text>
+    </svg>
+  );
+}
+
+function ConfirmStep({
+  geometry,
+  planImageUrl,
+  onChange,
+}: {
+  geometry: ApartmentGeometry;
+  planImageUrl: string;
+  onChange: (updated: ApartmentGeometry) => void;
+}) {
+  type DimKey = 'width_m' | 'length_m' | 'height_m';
+
+  const updateName = (idx: number, name: string) => {
+    const rooms = geometry.rooms.map((r, i) => i === idx ? { ...r, name } : r);
+    onChange({ ...geometry, rooms });
+  };
+
+  const updateType = (idx: number, type: string) => {
+    const rooms = geometry.rooms.map((r, i) =>
+      i === idx ? { ...r, type: type as ApartmentGeometry['rooms'][number]['type'] } : r
+    );
+    onChange({ ...geometry, rooms });
+  };
+
+  const updateDim = (idx: number, dim: DimKey, raw: string) => {
+    const val = parseFloat(raw);
+    if (isNaN(val) || val <= 0) return;
+    const rooms = geometry.rooms.map((r, i) =>
+      i === idx ? { ...r, dimensions: { ...r.dimensions, [dim]: val } } : r
+    );
+    onChange({ ...geometry, rooms });
+  };
+
+  return (
+    <section style={{ display: 'grid', gap: 20 }}>
+      <div>
+        <div className="serif" style={{ fontSize: 24, fontStyle: 'italic', color: 'var(--ink)' }}>
+          Найденные помещения
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 6, lineHeight: 1.6 }}>
+          Проверьте и скорректируйте при необходимости.
+        </div>
+      </div>
+
+      {/* Floor plan image */}
+      {planImageUrl && (
+        <div style={{ borderRadius: 14, overflow: 'hidden', border: '1px solid rgba(34,30,26,0.1)' }}>
+          <img
+            src={planImageUrl}
+            alt="План квартиры"
+            style={{ width: '100%', maxHeight: 220, objectFit: 'contain', background: '#f9f7f4', display: 'block' }}
+          />
+        </div>
+      )}
+
+      {/* SVG thumbnail grid */}
+      {geometry.rooms.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {geometry.rooms.map((room) => (
+            <div key={room.id} style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+              padding: '8px 6px', borderRadius: 12,
+              border: '1px solid rgba(34,30,26,0.1)', background: '#fff',
+              minWidth: 98,
+            }}>
+              <RoomSvgThumb room={room} />
+              <div style={{ fontSize: 10, color: 'var(--ink)', fontWeight: 600, textAlign: 'center', lineHeight: 1.2, maxWidth: 90 }}>
+                {room.name}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Editable room list */}
+      <div style={{ display: 'grid', gap: 12 }}>
+        {geometry.rooms.map((room, idx) => (
+          <div key={room.id} style={{
+            padding: '14px', borderRadius: 16,
+            border: '1px solid rgba(34,30,26,0.1)', background: '#fff',
+            display: 'grid', gap: 10,
+          }}>
+            {/* Name + type */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Название</div>
+                <input
+                  type="text"
+                  value={room.name}
+                  onChange={(e) => updateName(idx, e.target.value.slice(0, 60))}
+                  style={{
+                    width: '100%', borderRadius: 10, border: '1px solid var(--line)',
+                    padding: '8px 10px', background: 'var(--white)', color: 'var(--ink)',
+                    fontSize: 13, fontFamily: 'inherit', minHeight: 44, boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Тип</div>
+                <select
+                  value={room.type}
+                  onChange={(e) => updateType(idx, e.target.value)}
+                  style={{
+                    width: '100%', borderRadius: 10, border: '1px solid var(--line)',
+                    padding: '8px 10px', background: 'var(--white)', color: 'var(--ink)',
+                    fontSize: 13, fontFamily: 'inherit', minHeight: 44, boxSizing: 'border-box',
+                    appearance: 'none', cursor: 'pointer',
+                  }}
+                >
+                  {CONFIRM_ROOM_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Dimensions */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+              {(['width_m', 'length_m', 'height_m'] as DimKey[]).map((dim) => (
+                <div key={dim}>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
+                    {dim === 'width_m' ? 'Ширина, м' : dim === 'length_m' ? 'Длина, м' : 'Высота, м'}
+                  </div>
+                  <input
+                    type="number"
+                    min="0.5"
+                    max="30"
+                    step="0.1"
+                    defaultValue={room.dimensions[dim]}
+                    key={`${room.id}-${dim}`}
+                    onBlur={(e) => updateDim(idx, dim, e.target.value)}
+                    onChange={(e) => updateDim(idx, dim, e.target.value)}
+                    style={{
+                      width: '100%', borderRadius: 10, border: '1px solid var(--line)',
+                      padding: '8px 10px', background: 'var(--white)', color: 'var(--ink)',
+                      fontSize: 13, fontFamily: 'inherit', minHeight: 44, boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {geometry.rooms.length === 0 && (
+        <div style={{ fontSize: 13, color: 'var(--muted)', padding: '16px', borderRadius: 14, border: '1px dashed rgba(34,30,26,0.2)', textAlign: 'center' }}>
+          Комнаты не определены — генерация продолжится с параметрами по умолчанию.
+        </div>
+      )}
+    </section>
   );
 }
