@@ -351,10 +351,12 @@ export interface WallAwareBriefParams {
 
 // Negative prompt tuned for Flux Depth Pro (geometry comes from depth map,
 // so "bad geometry" terms are omitted to avoid fighting the control signal).
+// Frame-contract terms prevent Flux from hallucinating extra doors/windows.
 const FLUX_NEGATIVE_PROMPT =
   'blurry, low quality, cartoon, illustration, watermark, text, logo, people, ' +
   'faces, distorted scale, floating objects, oversaturated, flat lighting, ' +
-  'dark shadows, underexposed, noise, artifacts';
+  'dark shadows, underexposed, noise, artifacts, ' +
+  'extra doors, extra windows, invented arches, hallway openings, wrong wall openings';
 
 const ROOM_TYPE_EN: Record<string, string> = {
   kitchen:     'kitchen interior',
@@ -405,6 +407,30 @@ function lightingFromCamera(cameraWallId: string, windowWallIds: string[]): stri
 const WALL_NAMES: Record<string, string> = {
   W1: 'back wall', W2: 'right wall', W3: 'front wall', W4: 'left wall',
 };
+
+// FIX 4: visible walls per camera wall (excludes the camera wall itself)
+const VISIBLE_WALLS: Record<string, string[]> = {
+  W3: ['W1', 'W4', 'W2'], // cam at W3: ahead=W1, left=W4, right=W2
+  W1: ['W3', 'W2', 'W4'],
+  W2: ['W4', 'W1', 'W3'],
+  W4: ['W2', 'W3', 'W1'],
+};
+
+// Describes the features on each wall visible from the camera — used as the
+// "frame contract" block that tells Flux which openings to render.
+function describeVisibleWalls(room: GeometryRoom, cameraWallId: string): string {
+  const visibleIds = VISIBLE_WALLS[cameraWallId] ?? ['W1', 'W4', 'W2'];
+  const wallById = new Map(room.walls.map(w => [w.id, w]));
+  const relLabel: Record<string, string> = { W1: 'ahead', W2: 'right wall', W3: 'front wall', W4: 'left wall' };
+  return visibleIds.map(wid => {
+    const wall = wallById.get(wid);
+    if (!wall || wall.features.length === 0) return `  ${relLabel[wid] ?? wid}: solid wall, no openings`;
+    const feats = wall.features
+      .map(f => `${f.type} at ${f.position_from_start_m.toFixed(1)}m (${f.width_m.toFixed(1)}m wide)`)
+      .join('; ');
+    return `  ${relLabel[wid] ?? wid}: ${feats}`;
+  }).join('\n');
+}
 
 function describeFurniture(furniture: FurnitureObject[]): string {
   if (!furniture.length) return '';
@@ -479,6 +505,11 @@ export async function buildWallAwareBrief(
     ? `Furniture already placed in scene: ${describeFurniture(params.furniture)}.\n`
     : '';
 
+  // FIX 4: explicit per-wall feature description — constrains Flux to exact openings
+  const wallFrameDesc = describeVisibleWalls(room, cameraWallId);
+  const frameContract =
+    `\nFRAME CONTRACT — render EXACTLY these openings, no extras:\n${wallFrameDesc}\n`;
+
   const userPrompt =
     `Room: ${roomTypeEn}\n` +
     `Dimensions: ${width_m.toFixed(1)} × ${length_m.toFixed(1)} m, ${sizeTag}, ${heightTag}\n` +
@@ -489,6 +520,7 @@ export async function buildWallAwareBrief(
     `Budget tier: ${budget}\n` +
     furnitureClause +
     (wishes?.trim() ? `Client wishes: ${wishes.slice(0, 200)}\n` : '') +
+    frameContract +
     `\nReturn JSON:\n` +
     `{\n` +
     `  "prompt": "photorealistic interior photograph, [room], [style], [materials], [furniture list with positions], [lighting], [camera], 8K, architectural photography, no people",\n` +
@@ -784,16 +816,20 @@ export async function buildRoomFurniturePlan(room: GeometryRoom): Promise<Furnit
     const parsed = JSON.parse(raw) as { furniture?: unknown };
     const validated = validateFurnitureResponse(parsed.furniture, room);
 
-    if (validated.length > 0) {
-      console.log(`[designer] ${room.name}: planned ${validated.length} furniture objects`);
-      return validated;
+    // FIX 1: strip any items Groq placed on the camera wall despite instruction
+    const filtered = validated.filter(f => f.anchorWallId !== camWall);
+    if (filtered.length > 0) {
+      console.log(`[designer] ${room.name}: planned ${filtered.length} furniture objects`);
+      return filtered;
     }
     console.warn(`[designer] ${room.name}: Groq returned 0 valid objects — using fallback`);
   } catch (err) {
     console.warn(`[designer] ${room.name}: Groq failed — using fallback:`, err instanceof Error ? err.message : err);
   }
 
-  const fallback = FALLBACK_FURNITURE[room.type] ?? FALLBACK_FURNITURE['living'] ?? [];
+  // FIX 1: filter fallback too — never put furniture on camera wall
+  const fallback = (FALLBACK_FURNITURE[room.type] ?? FALLBACK_FURNITURE['living'] ?? [])
+    .filter(f => f.anchorWallId !== camWall);
   console.log(`[designer] ${room.name}: fallback furniture — ${fallback.length} objects`);
   return fallback;
 }

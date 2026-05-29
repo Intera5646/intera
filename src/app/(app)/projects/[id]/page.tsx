@@ -7,7 +7,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
 
   const { data, error } = await supabaseServer
     .from('generations')
-    .select('status, render_urls, error_message, designer_text, depth_map_url')
+    .select('status, render_urls, error_message, designer_text, depth_map_url, camera_metadata')
     .eq('id', id)
     .single();
 
@@ -22,6 +22,7 @@ export default async function ProjectDetailPage({ params }: { params: { id: stri
       initialRenderUrls={data.render_urls ?? []}
       initialError={data.error_message ?? null}
       initialDesignerText={data.designer_text ?? null}
+      initialCameraMetadata={(data as Record<string, unknown>).camera_metadata as { room_name?: string }[] | null ?? null}
     />
   );
 }

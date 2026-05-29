@@ -21,7 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { data, error } = await supabaseServer
     .from('generations')
-    .select('status, render_urls, error_message, designer_text, project_id, created_at')
+    .select('status, render_urls, error_message, designer_text, project_id, created_at, camera_metadata')
     .eq('id', generationId)
     .single();
 
@@ -63,5 +63,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     render_urls: data.render_urls ?? [],
     error_message: effectiveError,
     designer_text: data.designer_text ?? null,
+    camera_metadata: (data as Record<string, unknown>).camera_metadata ?? null,
   });
 }

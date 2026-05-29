@@ -734,12 +734,16 @@ async function runPhotoPipeline(ctx: {
 
 // ── BTI v2 pipeline: procedural depth map → Flux Depth Pro ───────────────────
 
+// FIX 3: named constant for Flux Depth Pro control strength
+const CONTROL_STRENGTH = 0.6;
+
 interface CameraMetaEntry {
   camera_index: number;
   camera_at_wall_id: string;
   facing_wall_id: string;
   description: string;
   room_id: string;
+  room_name: string; // FIX 7: display room label in UI
   depth_map_url: string;
 }
 
@@ -762,6 +766,8 @@ async function runBtiPipelineV2(ctx: {
 
   const roomResults = await Promise.allSettled(
     geometry.rooms.map(async (room, index) => {
+      // FIX 5: log each room so failures are traceable
+      console.log(`[BTI-v2] Queuing room ${index + 1}/${geometry.rooms.length}: "${room.name}" (${room.type})`);
       if (index > 0) await new Promise(r => setTimeout(r, index * 1000));
       return runBtiRoomV2({ room, params });
     })
@@ -770,13 +776,15 @@ async function runBtiPipelineV2(ctx: {
   const allRenderUrls: string[] = [];
   const cameraMetas: CameraMetaEntry[] = [];
 
-  for (const result of roomResults) {
+  for (let i = 0; i < roomResults.length; i++) {
+    const result = roomResults[i];
+    const room = geometry.rooms[i];
     if (result.status === 'fulfilled') {
       allRenderUrls.push(...result.value.renderUrls);
       cameraMetas.push(result.value.cameraMeta);
     } else {
       const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      console.error('[BTI-v2] Room failed:', msg);
+      console.error(`[BTI-v2] Room "${room?.name ?? i}" (${room?.type ?? '?'}) FAILED: ${msg}`);
     }
   }
 
@@ -833,13 +841,32 @@ async function runBtiRoomV2(opts: {
   const { room, params } = opts;
   const camIdx = 0;
 
+  // FIX 5: clamp tiny rooms (narrow balconies, wc) to minimum 1.5 m sides so
+  // the ray-caster never produces a degenerate scene.
+  const sanitizedRoom: GeometryRoom = {
+    ...room,
+    dimensions: {
+      ...room.dimensions,
+      width_m:  Math.max(1.5, room.dimensions.width_m),
+      length_m: Math.max(1.5, room.dimensions.length_m),
+    },
+  };
+
+  // FIX 1 (belt-and-suspenders): camera wall must not host any furniture
+  const camWall = sanitizedRoom.suggested_cameras[0]?.camera_at_wall_id ?? 'W3';
+
   // Step A: plan furniture with Groq designer
   console.log(`[BTI-v2:${room.name}] Planning furniture`);
-  const furniture = await buildRoomFurniturePlan(room);
+  const rawFurniture = await buildRoomFurniturePlan(sanitizedRoom);
+  const furniture = rawFurniture.filter(f => f.anchorWallId !== camWall);
+
+  // FIX 6: wider FOV for small rooms so the whole space fits the frame
+  const area = sanitizedRoom.dimensions.width_m * sanitizedRoom.dimensions.length_m;
+  const fovDeg = area < 4 ? 80 : undefined;
 
   // Step B: generate procedural depth map with furniture boxes
-  console.log(`[BTI-v2:${room.name}] Generating depth map (${furniture.length} furniture objects)`);
-  const depthPng = await generateDepthMapBuffer(room, { width: 512, height: 512, cameraIndex: camIdx, furniture });
+  console.log(`[BTI-v2:${room.name}] Generating depth map (${furniture.length} furniture objects${fovDeg ? ', FOV=' + fovDeg : ''})`);
+  const depthPng = await generateDepthMapBuffer(sanitizedRoom, { width: 512, height: 512, cameraIndex: camIdx, furniture, fovDeg });
 
   // Step C: upload to depth-maps bucket
   const depthPath = `${params.projectId}/${params.generationId}_${room.id}.png`;
@@ -854,9 +881,9 @@ async function runBtiRoomV2(opts: {
   const controlImageUrl = urlData.publicUrl;
   console.log(`[BTI-v2:${room.name}] Depth map →`, controlImageUrl.slice(0, 80));
 
-  // Step D: build wall-aware Groq prompt describing the placed furniture
+  // Step D: build wall-aware Groq prompt with frame contract
   const { prompt, negativePrompt } = await buildWallAwareBrief({
-    room,
+    room: sanitizedRoom,
     style: params.style,
     budget: params.budget,
     wishes: params.wishes || undefined,
@@ -864,19 +891,19 @@ async function runBtiRoomV2(opts: {
     furniture,
   });
 
-  // Step E: call Flux Depth Pro (controlStrength 0.55 — depth map has furniture, prompt reinforces it)
-  console.log(`[BTI-v2:${room.name}] Calling Flux Depth Pro`);
+  // Step E: call Flux Depth Pro
+  console.log(`[BTI-v2:${room.name}] Calling Flux Depth Pro (controlStrength=${CONTROL_STRENGTH})`);
   const renderUrls = await generateFluxDepthPro({
     controlImage: controlImageUrl,
     prompt,
     negativePrompt,
     numOutputs: 1,
     guidanceScale: 3.5,
-    controlStrength: 0.55,
+    controlStrength: CONTROL_STRENGTH, // FIX 3
   });
   console.log(`[BTI-v2:${room.name}] ${renderUrls.length} render(s) returned`);
 
-  const cam = room.suggested_cameras[camIdx];
+  const cam = sanitizedRoom.suggested_cameras[camIdx];
   return {
     renderUrls,
     cameraMeta: {
@@ -885,6 +912,7 @@ async function runBtiRoomV2(opts: {
       facing_wall_id:    cam?.facing_wall_id    ?? 'W1',
       description:       cam?.description       ?? '',
       room_id:           room.id,
+      room_name:         room.name, // FIX 7
       depth_map_url:     controlImageUrl,
     },
   };

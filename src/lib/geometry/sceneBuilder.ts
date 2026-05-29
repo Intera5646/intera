@@ -31,6 +31,8 @@ export interface RoomScene {
 
 // Distance camera is placed from its backing wall (metres)
 const INSET_M = 0.35;
+// Reduced inset for rooms smaller than 4 m² (balcony, wc, etc.)
+const INSET_SMALL = 0.15;
 
 // Room coordinate system:
 //   X ∈ [0, width_m]   — left to right (when looking at back wall)
@@ -43,17 +45,17 @@ const INSET_M = 0.35;
 //   W3 = front wall (Z = 0)        — default camera position
 //   W4 = left wall  (X = 0)
 
-function cameraAtWall(id: string, W: number, L: number, eyeY: number): RoomCamera {
+function cameraAtWall(id: string, W: number, L: number, eyeY: number, inset: number): RoomCamera {
   switch (id) {
     case 'W1': // back wall → look toward front (-Z)
-      return { x: W / 2, y: eyeY, z: L - INSET_M, fx: 0, fy: 0, fz: -1, rx: -1, ry: 0, rz: 0 };
+      return { x: W / 2, y: eyeY, z: L - inset, fx: 0, fy: 0, fz: -1, rx: -1, ry: 0, rz: 0 };
     case 'W2': // right wall → look toward left (-X)
-      return { x: W - INSET_M, y: eyeY, z: L / 2, fx: -1, fy: 0, fz: 0, rx: 0, ry: 0, rz: 1 };
+      return { x: W - inset, y: eyeY, z: L / 2, fx: -1, fy: 0, fz: 0, rx: 0, ry: 0, rz: 1 };
     case 'W4': // left wall → look toward right (+X)
-      return { x: INSET_M, y: eyeY, z: L / 2, fx: 1, fy: 0, fz: 0, rx: 0, ry: 0, rz: -1 };
+      return { x: inset, y: eyeY, z: L / 2, fx: 1, fy: 0, fz: 0, rx: 0, ry: 0, rz: -1 };
     case 'W3': // front wall → look toward back (+Z)  — default
     default:
-      return { x: W / 2, y: eyeY, z: INSET_M, fx: 0, fy: 0, fz: 1, rx: 1, ry: 0, rz: 0 };
+      return { x: W / 2, y: eyeY, z: inset, fx: 0, fy: 0, fz: 1, rx: 1, ry: 0, rz: 0 };
   }
 }
 
@@ -98,6 +100,9 @@ function extractOpenings(room: GeometryRoom): WallOpening[] {
 export function buildScene(room: GeometryRoom, cameraIndex = 0): RoomScene {
   const { width_m: W, length_m: L, height_m: H } = room.dimensions;
   const eyeY = Math.min(1.6, H * 0.6);
+  // FIX 6: use tighter inset for small rooms so camera doesn't clip through furniture
+  const area = W * L;
+  const inset = area < 4 ? INSET_SMALL : INSET_M;
 
   const camSuggestion = room.suggested_cameras[cameraIndex] ?? room.suggested_cameras[0];
   const wallId = camSuggestion?.camera_at_wall_id ?? 'W3';
@@ -106,7 +111,7 @@ export function buildScene(room: GeometryRoom, cameraIndex = 0): RoomScene {
     width_m:  W,
     length_m: L,
     height_m: H,
-    camera:   cameraAtWall(wallId, W, L, eyeY),
+    camera:   cameraAtWall(wallId, W, L, eyeY, inset),
     openings: extractOpenings(room),
   };
 }

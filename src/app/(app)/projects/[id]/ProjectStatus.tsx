@@ -22,12 +22,19 @@ type DesignerText = {
   }>;
 };
 
+type CameraMetaEntry = {
+  room_name?: string;
+  camera_index?: number;
+  room_id?: string;
+};
+
 type ProjectStatusProps = {
   generationId: string;
   initialStatus: string;
   initialRenderUrls: string[];
   initialError: string | null;
   initialDesignerText: DesignerText | null;
+  initialCameraMetadata?: CameraMetaEntry[] | null;
 };
 
 function formatPrice(value: number) {
@@ -40,6 +47,7 @@ export default function ProjectStatus({
   initialRenderUrls,
   initialError,
   initialDesignerText,
+  initialCameraMetadata,
 }: ProjectStatusProps) {
   const router = useRouter();
 
@@ -64,6 +72,7 @@ export default function ProjectStatus({
   const [errorMessage, setErrorMessage] = useState(initialError);
   const [designerText, setDesignerText] = useState<DesignerText | null>(initialDesignerText);
   const [activeTab, setActiveTab] = useState<'renders' | 'designer' | 'shopping'>('renders');
+  const [cameraMetadata, setCameraMetadata] = useState<CameraMetaEntry[] | null>(initialCameraMetadata ?? null);
 
   useEffect(() => {
     if (status !== 'processing' && status !== 'pending') return;
@@ -78,6 +87,7 @@ export default function ProjectStatus({
       setProgress(result.progress ?? (result.status === 'done' ? 100 : 60));
       setRenderUrls(normalizeRenderUrls(result.render_urls ?? []));
       if (result.designer_text) setDesignerText(result.designer_text);
+      if (result.camera_metadata) setCameraMetadata(result.camera_metadata as CameraMetaEntry[]);
       if (result.status === 'failed') {
         setErrorMessage(result.error_message ?? 'Генерация завершилась ошибкой.');
         window.clearInterval(interval);
@@ -252,10 +262,25 @@ export default function ProjectStatus({
                           minHeight: 160,
                         }}
                       >
+                        {cameraMetadata?.[idx]?.room_name && (
+                          <div
+                            style={{
+                              padding: '5px 10px',
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: 'var(--brand-primary)',
+                              background: 'rgba(255,255,255,0.92)',
+                              borderBottom: '1px solid rgba(13,27,42,0.08)',
+                              letterSpacing: '0.02em',
+                            }}
+                          >
+                            {cameraMetadata[idx].room_name}
+                          </div>
+                        )}
                         <a href={url} target="_blank" rel="noopener noreferrer">
                           <img
                             src={url}
-                            alt={`Рендер ${idx + 1}`}
+                            alt={cameraMetadata?.[idx]?.room_name ?? `Рендер ${idx + 1}`}
                             style={{ width: '100%', display: 'block' }}
                           />
                         </a>

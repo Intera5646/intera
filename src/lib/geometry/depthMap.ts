@@ -26,7 +26,9 @@ interface FurnitureAABB {
 
 /** Convert a FurnitureObject to an axis-aligned bounding box in room coordinates. */
 function furnitureToAABB(f: FurnitureObject, W: number, L: number): FurnitureAABB | null {
-  const wF  = Math.max(0.1, f.widthM);
+  // FIX 2: clamp width so furniture can never overflow the wall it's anchored to
+  const wallLength = ['W1', 'W3'].includes(f.anchorWallId) ? W : L;
+  const wF  = Math.max(0.1, Math.min(wallLength * 0.9, f.widthM));
   const dF  = Math.max(0.1, f.depthM);
   const hF  = Math.max(0.1, f.heightM);
   const pos = Math.max(0, Math.min(0.95, f.positionAlongWall));
