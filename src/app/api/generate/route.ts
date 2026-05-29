@@ -22,7 +22,7 @@ import {
   type RoomInfo,
   type RoomPrompt,
 } from '../../../lib/ai/groq';
-import { generateDepthMapBuffer } from '../../../lib/geometry/depthMap';
+import { generateSemanticRenderBuffer } from '../../../lib/geometry/depthMap';
 import type { ApartmentGeometry, GeometryRoom } from '../../../lib/geometry/types';
 import { STYLE_PROMPTS, ROOM_PROMPTS, BUDGET_PROMPTS } from '../../../lib/data/zones_index';
 
@@ -864,22 +864,22 @@ async function runBtiRoomV2(opts: {
   const area = sanitizedRoom.dimensions.width_m * sanitizedRoom.dimensions.length_m;
   const fovDeg = area < 4 ? 80 : undefined;
 
-  // Step B: generate procedural depth map with furniture boxes
-  console.log(`[BTI-v2:${room.name}] Generating depth map (${furniture.length} furniture objects${fovDeg ? ', FOV=' + fovDeg : ''})`);
-  const depthPng = await generateDepthMapBuffer(sanitizedRoom, { width: 512, height: 512, cameraIndex: camIdx, furniture, fovDeg });
+  // Step B: generate colored semantic 3D block render with furniture
+  console.log(`[BTI-v2:${room.name}] Generating semantic render (${furniture.length} furniture objects${fovDeg ? ', FOV=' + fovDeg : ''})`);
+  const controlPng = await generateSemanticRenderBuffer(sanitizedRoom, { width: 768, height: 768, cameraIndex: camIdx, furniture, fovDeg });
 
-  // Step C: upload to depth-maps bucket
+  // Step C: upload to depth-maps bucket (now holds the colored control image)
   const depthPath = `${params.projectId}/${params.generationId}_${room.id}.png`;
   const { data: uploadData, error: uploadErr } = await supabaseServer.storage
     .from('depth-maps')
-    .upload(depthPath, depthPng, { contentType: 'image/png', upsert: true });
+    .upload(depthPath, controlPng, { contentType: 'image/png', upsert: true });
 
   if (uploadErr || !uploadData) {
-    throw new Error(`depth map upload failed for ${room.name}: ${uploadErr?.message ?? 'no data'}`);
+    throw new Error(`control image upload failed for ${room.name}: ${uploadErr?.message ?? 'no data'}`);
   }
   const { data: urlData } = supabaseServer.storage.from('depth-maps').getPublicUrl(uploadData.path);
   const controlImageUrl = urlData.publicUrl;
-  console.log(`[BTI-v2:${room.name}] Depth map →`, controlImageUrl.slice(0, 80));
+  console.log(`[BTI-v2:${room.name}] Semantic render →`, controlImageUrl.slice(0, 80));
 
   // Step D: build wall-aware Groq prompt with frame contract
   const { prompt, negativePrompt } = await buildWallAwareBrief({
@@ -891,14 +891,15 @@ async function runBtiRoomV2(opts: {
     furniture,
   });
 
-  // Step E: call Flux Depth Pro
+  // Step E: call Flux Depth Pro — colored control image needs higher guidance + steps
   console.log(`[BTI-v2:${room.name}] Calling Flux Depth Pro (controlStrength=${CONTROL_STRENGTH})`);
   const renderUrls = await generateFluxDepthPro({
     controlImage: controlImageUrl,
     prompt,
     negativePrompt,
     numOutputs: 1,
-    guidanceScale: 3.5,
+    guidanceScale: 7.5,
+    numInferenceSteps: 35,
     controlStrength: CONTROL_STRENGTH, // FIX 3
   });
   console.log(`[BTI-v2:${room.name}] ${renderUrls.length} render(s) returned`);

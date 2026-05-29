@@ -11,6 +11,8 @@ export interface WallOpening {
   /** vertical extent */
   yMin: number;
   yMax: number;
+  /** feature kind — drives semantic color (window=sky blue, door=brown) */
+  type: 'door' | 'window';
 }
 
 export interface RoomCamera {
@@ -90,6 +92,7 @@ function extractOpenings(room: GeometryRoom): WallOpening[] {
         lateralMax: latMax,
         yMin,
         yMax,
+        type:       feat.type,
       });
     }
   }

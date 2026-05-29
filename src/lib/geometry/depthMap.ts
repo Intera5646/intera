@@ -4,16 +4,67 @@ import type { GeometryRoom, FurnitureObject } from './types';
 import type { WallOpening } from './sceneBuilder';
 
 export interface DepthMapOptions {
-  /** Output width in pixels (default 512) */
+  /** Output width in pixels (default 768) */
   width?: number;
-  /** Output height in pixels (default 512) */
+  /** Output height in pixels (default 768) */
   height?: number;
   /** Camera FOV in degrees (default 75) */
   fovDeg?: number;
   /** Index into room.suggested_cameras to use (default 0) */
   cameraIndex?: number;
-  /** Furniture to render as solid boxes in the depth map */
+  /** Furniture to render as solid colored boxes in the semantic render */
   furniture?: FurnitureObject[];
+}
+
+// ── Semantic color palette ─────────────────────────────────────────────────────
+// The control image is a 3D block model in semantic colors. Flux Depth Pro reads
+// BOTH the extracted depth (perspective + hybrid shading) AND the semantic hue of
+// each surface, so a sofa-colored block becomes a sofa, a white bathtub shape a
+// bathtub, a sky-blue rectangle a window, etc.
+
+type RGB = [number, number, number];
+
+const SURFACE_COLORS: Record<'floor' | 'ceiling' | 'wall' | 'window' | 'door', RGB> = {
+  floor:   [212, 180, 131], // warm wood
+  ceiling: [240, 238, 232], // off-white
+  wall:    [225, 220, 210], // warm white
+  window:  [135, 200, 235], // sky blue
+  door:    [139, 105, 20],  // warm brown wood
+};
+
+const FURNITURE_COLORS: Record<string, RGB> = {
+  sofa:           [100, 120, 160], // muted blue-grey
+  bed:            [160, 175, 200], // light blue
+  wardrobe:       [180, 155, 120], // tan wood
+  kitchen_run:    [210, 210, 205], // warm white cabinet
+  upper_cabinets: [210, 210, 205], // same
+  fridge:         [195, 200, 205], // cool light grey
+  stove:          [80, 80, 85],    // dark anthracite
+  cooktop:        [80, 80, 85],    // alias of stove
+  sink_kitchen:   [180, 190, 195], // stainless
+  bathtub:        [235, 235, 255], // white porcelain, blue tint
+  shower:         [180, 210, 225], // light blue-white
+  toilet:         [238, 238, 245], // white ceramic
+  vanity_sink:    [220, 225, 240], // white with blue tint
+  corner_sink:    [220, 225, 240], // alias of vanity
+  console_table:  [175, 148, 118], // warm wood
+  tv_unit:        [90, 90, 95],    // dark grey
+  coffee_table:   [190, 165, 130], // natural wood
+  bistro_table:   [190, 165, 130], // alias of coffee table
+  nightstand:     [190, 165, 130], // natural wood
+  shelving:       [200, 178, 148], // light wood
+  coat_storage:   [180, 155, 120], // alias of wardrobe
+};
+
+const FURNITURE_DEFAULT: RGB = [160, 150, 140]; // neutral warm grey
+const BACKGROUND: RGB = [0, 0, 0];              // rays that escape the closed box
+
+// Hybrid shading: surface keeps its hue, brightness scales with proximity so the
+// render still carries a depth gradient for Flux's internal depth estimator.
+const SHADE_MIN = 0.4;
+
+function colorForFurniture(type: string): RGB {
+  return FURNITURE_COLORS[type] ?? FURNITURE_DEFAULT;
 }
 
 // ── Furniture AABB helpers ─────────────────────────────────────────────────────
@@ -22,6 +73,7 @@ interface FurnitureAABB {
   xMin: number; xMax: number;
   yMin: number; yMax: number;
   zMin: number; zMax: number;
+  color: RGB;
 }
 
 /** Convert a FurnitureObject to an axis-aligned bounding box in room coordinates. */
@@ -34,23 +86,24 @@ function furnitureToAABB(f: FurnitureObject, W: number, L: number): FurnitureAAB
   const pos = Math.max(0, Math.min(0.95, f.positionAlongWall));
   const yLo = f.yOffsetM ?? 0;
   const yHi = yLo + hF;
+  const color = colorForFurniture(f.type);
 
   switch (f.anchorWallId) {
     case 'W1': { // back wall Z = L, runs along X
       const xStart = pos * W;
-      return { xMin: xStart, xMax: Math.min(W, xStart + wF), yMin: yLo, yMax: yHi, zMin: Math.max(0, L - dF), zMax: L };
+      return { xMin: xStart, xMax: Math.min(W, xStart + wF), yMin: yLo, yMax: yHi, zMin: Math.max(0, L - dF), zMax: L, color };
     }
     case 'W3': { // front wall Z = 0, runs along X
       const xStart = pos * W;
-      return { xMin: xStart, xMax: Math.min(W, xStart + wF), yMin: yLo, yMax: yHi, zMin: 0, zMax: Math.min(L, dF) };
+      return { xMin: xStart, xMax: Math.min(W, xStart + wF), yMin: yLo, yMax: yHi, zMin: 0, zMax: Math.min(L, dF), color };
     }
     case 'W2': { // right wall X = W, runs along Z
       const zStart = pos * L;
-      return { xMin: Math.max(0, W - dF), xMax: W, yMin: yLo, yMax: yHi, zMin: zStart, zMax: Math.min(L, zStart + wF) };
+      return { xMin: Math.max(0, W - dF), xMax: W, yMin: yLo, yMax: yHi, zMin: zStart, zMax: Math.min(L, zStart + wF), color };
     }
     case 'W4': { // left wall X = 0, runs along Z
       const zStart = pos * L;
-      return { xMin: 0, xMax: Math.min(W, dF), yMin: yLo, yMax: yHi, zMin: zStart, zMax: Math.min(L, zStart + wF) };
+      return { xMin: 0, xMax: Math.min(W, dF), yMin: yLo, yMax: yHi, zMin: zStart, zMax: Math.min(L, zStart + wF), color };
     }
     default:
       return null;
@@ -84,17 +137,17 @@ function rayIntersectsAABB(
 
 const EPS = 1e-9;
 
-// Returns true when a ray hit on a wall plane falls inside a door/window opening.
+// Returns the opening type at a wall hit point, or null if the hit is solid wall.
 // perpAxis=0 means it's an X-wall (W2/W4) → lateral coord is hitZ
 // perpAxis=2 means it's a Z-wall (W1/W3) → lateral coord is hitX
-function inOpening(
+function openingTypeAt(
   openings: WallOpening[],
   perpAxis: 0 | 2,
   perpValue: number,
   hitX: number,
   hitY: number,
   hitZ: number,
-): boolean {
+): 'door' | 'window' | null {
   const lateral = perpAxis === 0 ? hitZ : hitX;
   for (const op of openings) {
     if (op.perpAxis !== perpAxis) continue;
@@ -102,9 +155,24 @@ function inOpening(
     if (
       lateral >= op.lateralMin && lateral <= op.lateralMax &&
       hitY   >= op.yMin        && hitY   <= op.yMax
-    ) return true;
+    ) return op.type;
   }
-  return false;
+  return null;
+}
+
+// Picks the semantic color of a wall hit: window / door opening, or solid wall.
+function wallColor(
+  openings: WallOpening[],
+  perpAxis: 0 | 2,
+  perpValue: number,
+  hitX: number,
+  hitY: number,
+  hitZ: number,
+): RGB {
+  const op = openingTypeAt(openings, perpAxis, perpValue, hitX, hitY, hitZ);
+  if (op === 'window') return SURFACE_COLORS.window;
+  if (op === 'door')   return SURFACE_COLORS.door;
+  return SURFACE_COLORS.wall;
 }
 
 // Signed intersection of a ray with an axis-aligned plane.
@@ -119,31 +187,35 @@ function planeT(
   return t > 0.001 ? t : Infinity;
 }
 
-export async function generateDepthMapBuffer(
+/**
+ * Render a colored semantic 3D block model of the room from the chosen camera.
+ * Output: RGB PNG where each surface carries its semantic hue, shaded by depth.
+ */
+export async function generateSemanticRenderBuffer(
   room: GeometryRoom,
   options?: DepthMapOptions,
 ): Promise<Buffer> {
-  const imgW     = options?.width       ?? 512;
-  const imgH     = options?.height      ?? 512;
+  const imgW     = options?.width       ?? 768;
+  const imgH     = options?.height      ?? 768;
   const fovRad   = ((options?.fovDeg ?? 75) * Math.PI) / 180;
   const camIndex = options?.cameraIndex ?? 0;
 
   const scene = buildScene(room, camIndex);
   const { width_m: W, length_m: L, height_m: H, camera: cam, openings } = scene;
 
-  // Pre-compute furniture AABBs once (outside the pixel loop)
+  // Pre-compute furniture AABBs (with their colors) once, outside the pixel loop
   const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
     .map(f => furnitureToAABB(f, W, L))
     .filter((b): b is FurnitureAABB => b !== null);
 
-  // Normalisation: distances beyond this map to 0 (black / far)
+  // Normalisation: distances beyond this are fully shaded toward dark
   const maxDist = Math.sqrt(W * W + H * H + L * L) * 1.1;
 
   const aspect      = imgW / imgH;
   const tanHalfFov  = Math.tan(fovRad / 2);
 
-  // RGBA raw pixel buffer (4 bytes per pixel)
-  const rawBuf = Buffer.allocUnsafe(imgW * imgH * 4);
+  // RGB raw pixel buffer (3 bytes per pixel)
+  const rawBuf = Buffer.allocUnsafe(imgW * imgH * 3);
 
   for (let py = 0; py < imgH; py++) {
     for (let px = 0; px < imgW; px++) {
@@ -163,13 +235,16 @@ export async function generateDepthMapBuffer(
 
       const ox = cam.x, oy = cam.y, oz = cam.z;
       let minT = Infinity;
+      let cr = BACKGROUND[0], cg = BACKGROUND[1], cb = BACKGROUND[2];
 
       // ── Floor  (y = 0) ────────────────────────────────────────────────────
       {
         const t = planeT(oy, dy, 0);
         if (t < minT) {
           const hx = ox + dx * t, hz = oz + dz * t;
-          if (hx >= 0 && hx <= W && hz >= 0 && hz <= L) minT = t;
+          if (hx >= 0 && hx <= W && hz >= 0 && hz <= L) {
+            minT = t; cr = SURFACE_COLORS.floor[0]; cg = SURFACE_COLORS.floor[1]; cb = SURFACE_COLORS.floor[2];
+          }
         }
       }
 
@@ -178,7 +253,9 @@ export async function generateDepthMapBuffer(
         const t = planeT(oy, dy, H);
         if (t < minT) {
           const hx = ox + dx * t, hz = oz + dz * t;
-          if (hx >= 0 && hx <= W && hz >= 0 && hz <= L) minT = t;
+          if (hx >= 0 && hx <= W && hz >= 0 && hz <= L) {
+            minT = t; cr = SURFACE_COLORS.ceiling[0]; cg = SURFACE_COLORS.ceiling[1]; cb = SURFACE_COLORS.ceiling[2];
+          }
         }
       }
 
@@ -188,7 +265,8 @@ export async function generateDepthMapBuffer(
         if (t < minT) {
           const hx = ox + dx * t, hy = oy + dy * t;
           if (hx >= 0 && hx <= W && hy >= 0 && hy <= H) {
-            if (!inOpening(openings, 2, 0, hx, hy, 0)) minT = t;
+            minT = t;
+            const c = wallColor(openings, 2, 0, hx, hy, 0); cr = c[0]; cg = c[1]; cb = c[2];
           }
         }
       }
@@ -199,7 +277,8 @@ export async function generateDepthMapBuffer(
         if (t < minT) {
           const hx = ox + dx * t, hy = oy + dy * t;
           if (hx >= 0 && hx <= W && hy >= 0 && hy <= H) {
-            if (!inOpening(openings, 2, L, hx, hy, L)) minT = t;
+            minT = t;
+            const c = wallColor(openings, 2, L, hx, hy, L); cr = c[0]; cg = c[1]; cb = c[2];
           }
         }
       }
@@ -210,7 +289,8 @@ export async function generateDepthMapBuffer(
         if (t < minT) {
           const hy = oy + dy * t, hz = oz + dz * t;
           if (hz >= 0 && hz <= L && hy >= 0 && hy <= H) {
-            if (!inOpening(openings, 0, 0, 0, hy, hz)) minT = t;
+            minT = t;
+            const c = wallColor(openings, 0, 0, 0, hy, hz); cr = c[0]; cg = c[1]; cb = c[2];
           }
         }
       }
@@ -221,32 +301,39 @@ export async function generateDepthMapBuffer(
         if (t < minT) {
           const hy = oy + dy * t, hz = oz + dz * t;
           if (hz >= 0 && hz <= L && hy >= 0 && hy <= H) {
-            if (!inOpening(openings, 0, W, W, hy, hz)) minT = t;
+            minT = t;
+            const c = wallColor(openings, 0, W, W, hy, hz); cr = c[0]; cg = c[1]; cb = c[2];
           }
         }
       }
 
       // ── Furniture boxes  (nearest AABB wins) ──────────────────────────────
       for (let fi = 0; fi < furnitureBoxes.length; fi++) {
-        const t = rayIntersectsAABB(ox, oy, oz, dx, dy, dz, furnitureBoxes[fi]);
-        if (t < minT) minT = t;
+        const box = furnitureBoxes[fi];
+        const t = rayIntersectsAABB(ox, oy, oz, dx, dy, dz, box);
+        if (t < minT) {
+          minT = t; cr = box.color[0]; cg = box.color[1]; cb = box.color[2];
+        }
       }
 
-      // ── Depth → luminance  (near=bright, far=dark) ────────────────────────
-      const lum =
-        minT === Infinity
-          ? 0
-          : Math.round(Math.max(0, Math.min(1, 1 - minT / maxDist)) * 255);
-
-      const i = (py * imgW + px) * 4;
-      rawBuf[i]     = lum;
-      rawBuf[i + 1] = lum;
-      rawBuf[i + 2] = lum;
-      rawBuf[i + 3] = 255;
+      // ── Hybrid shading: semantic hue × depth-driven brightness ─────────────
+      const i = (py * imgW + px) * 3;
+      if (minT === Infinity) {
+        rawBuf[i] = BACKGROUND[0]; rawBuf[i + 1] = BACKGROUND[1]; rawBuf[i + 2] = BACKGROUND[2];
+      } else {
+        const depthFactor = Math.max(0, Math.min(1, 1 - minT / maxDist));
+        const shade = SHADE_MIN + (1 - SHADE_MIN) * depthFactor;
+        rawBuf[i]     = Math.round(cr * shade);
+        rawBuf[i + 1] = Math.round(cg * shade);
+        rawBuf[i + 2] = Math.round(cb * shade);
+      }
     }
   }
 
-  return sharp(rawBuf, { raw: { width: imgW, height: imgH, channels: 4 } })
+  return sharp(rawBuf, { raw: { width: imgW, height: imgH, channels: 3 } })
     .png()
     .toBuffer();
 }
+
+// Backward-compatible alias — earlier pipeline code imports generateDepthMapBuffer.
+export const generateDepthMapBuffer = generateSemanticRenderBuffer;

@@ -497,9 +497,11 @@ export async function buildWallAwareBrief(
   const windowsHint  = totalWindows === 0 ? 'no windows' : totalWindows === 1 ? 'single window' : 'multiple windows';
 
   const systemPrompt =
-    'You are a prompt engineer specialising in Flux Depth Pro, a geometry-preserving interior render model. ' +
-    'The room geometry is already encoded in the depth map — your prompt should focus on materials, ' +
-    'lighting atmosphere, style mood, and camera framing. Write in English only. Return JSON only.';
+    'You are a prompt engineer for Flux Depth Pro. The control image is a 3D block model of the room ' +
+    'with furniture shown in semantic colors (e.g. blue-grey sofa, white bathtub, brown door, sky-blue window). ' +
+    'Render it as a photorealistic interior, keeping every furniture piece and opening exactly where its colored ' +
+    'block sits. Your prompt focuses on materials, lighting atmosphere, style mood and camera framing — ' +
+    'describe the furniture that is present, do not omit it. Write in English only. Return JSON only.';
 
   const furnitureClause = params.furniture?.length
     ? `Furniture already placed in scene: ${describeFurniture(params.furniture)}.\n`
@@ -686,16 +688,19 @@ ${wishesClause}
 // One Groq call per room. Returns FurnitureObject[] anchored to walls.
 // If Groq fails, returns a hardcoded default set for the room type.
 
+// §5 Kitchen: model the work sequence as SEPARATE blocks (fridge → sink → prep →
+// cooktop) so the semantic render shows each appliance in its own color.
+// §4 Sanitary: bathroom = wet fixture + vanity + toilet; wc = toilet + small sink.
 const MANDATORY_FURNITURE: Record<string, string> = {
-  living:      'sofa (against longest solid wall, facing center), tv_unit (wall opposite sofa), shelving (solid wall), floor_lamp (corner)',
+  living:      'sofa (against longest solid wall, facing center), tv_unit (wall opposite sofa), shelving (solid wall)',
   bedroom:     'bed (headboard against solid wall), 2x nightstand (flanking bed), wardrobe (side or opposite wall)',
-  kitchen:     'kitchen_run (full counter: fridge → sink → stove along one wall), upper_cabinets (above counter)',
-  bathroom:    'bathtub or shower (against wall), vanity_sink (against wall), toilet (corner)',
-  wc:          'toilet (against back wall), corner_sink (corner), mirror (above sink)',
-  hallway:     'wardrobe or coat_storage (against wall), console_table (against wall), mirror',
-  balcony:     'bistro_table (center), 2x chair',
+  kitchen:     'kitchen_run (base counter along one wall), fridge (one end of the run), sink_kitchen (on the run), stove (on the run, work sequence fridge → sink → prep → stove), upper_cabinets (wall-mounted above the run)',
+  bathroom:    'bathtub OR shower (against wall), vanity_sink (against wall), toilet (corner away from door)',
+  wc:          'toilet (against back wall), corner_sink (corner)',
+  hallway:     'wardrobe or coat_storage (against wall), console_table (against wall)',
+  balcony:     'bistro_table (center), shelving (along wall)',
   storage:     'shelving (along walls)',
-  studio_zone: 'sofa (living zone), kitchen_run (kitchen zone along wall), fridge',
+  studio_zone: 'sofa (living zone), kitchen_run (kitchen zone along wall), fridge (end of run), sink_kitchen (on run), stove (on run)',
 };
 
 const FALLBACK_FURNITURE: Record<string, FurnitureObject[]> = {
@@ -710,8 +715,12 @@ const FALLBACK_FURNITURE: Record<string, FurnitureObject[]> = {
     { id: 'F3', type: 'wardrobe',   anchorWallId: 'W2', positionAlongWall: 0.60, widthM: 1.2, depthM: 0.60, heightM: 2.20 },
   ],
   kitchen: [
-    { id: 'F1', type: 'kitchen_run', anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 3.2, depthM: 0.60, heightM: 0.90 },
-    { id: 'F2', type: 'fridge',      anchorWallId: 'W2', positionAlongWall: 0.05, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
+    // Work sequence along W1: fridge → sink → stove, with a base run + wall cabinets
+    { id: 'F1', type: 'kitchen_run',    anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 3.2,  depthM: 0.60, heightM: 0.90 },
+    { id: 'F2', type: 'fridge',         anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
+    { id: 'F3', type: 'sink_kitchen',   anchorWallId: 'W1', positionAlongWall: 0.45, widthM: 0.80, depthM: 0.60, heightM: 0.90 },
+    { id: 'F4', type: 'stove',          anchorWallId: 'W1', positionAlongWall: 0.75, widthM: 0.60, depthM: 0.60, heightM: 0.90 },
+    { id: 'F5', type: 'upper_cabinets', anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 3.2,  depthM: 0.35, heightM: 0.70, yOffsetM: 1.5 },
   ],
   bathroom: [
     { id: 'F1', type: 'bathtub',     anchorWallId: 'W1', positionAlongWall: 0.05, widthM: 1.70, depthM: 0.75, heightM: 0.60 },
@@ -734,9 +743,11 @@ const FALLBACK_FURNITURE: Record<string, FurnitureObject[]> = {
     { id: 'F2', type: 'shelving', anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 1.2, depthM: 0.40, heightM: 2.20 },
   ],
   studio_zone: [
-    { id: 'F1', type: 'sofa',        anchorWallId: 'W1', positionAlongWall: 0.10, widthM: 2.1, depthM: 0.90, heightM: 0.85 },
-    { id: 'F2', type: 'kitchen_run', anchorWallId: 'W2', positionAlongWall: 0.00, widthM: 2.5, depthM: 0.60, heightM: 0.90 },
-    { id: 'F3', type: 'fridge',      anchorWallId: 'W2', positionAlongWall: 0.80, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
+    { id: 'F1', type: 'sofa',         anchorWallId: 'W1', positionAlongWall: 0.10, widthM: 2.1,  depthM: 0.90, heightM: 0.85 },
+    { id: 'F2', type: 'kitchen_run',  anchorWallId: 'W2', positionAlongWall: 0.00, widthM: 2.5,  depthM: 0.60, heightM: 0.90 },
+    { id: 'F3', type: 'fridge',       anchorWallId: 'W2', positionAlongWall: 0.00, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
+    { id: 'F4', type: 'sink_kitchen', anchorWallId: 'W2', positionAlongWall: 0.45, widthM: 0.80, depthM: 0.60, heightM: 0.90 },
+    { id: 'F5', type: 'stove',        anchorWallId: 'W2', positionAlongWall: 0.75, widthM: 0.60, depthM: 0.60, heightM: 0.90 },
   ],
 };
 
@@ -761,6 +772,10 @@ function validateFurnitureResponse(raw: unknown, room: GeometryRoom): FurnitureO
       depthM,
       heightM,
     };
+    // Preserve vertical offset for wall-mounted items (e.g. upper_cabinets)
+    if (f.yOffsetM !== undefined) {
+      obj.yOffsetM = Math.max(0, Math.min(2.4, Number(f.yOffsetM) || 0));
+    }
     if (f.facing) obj.facing = String(f.facing);
     return [obj];
   });
@@ -798,7 +813,14 @@ export async function buildRoomFurniturePlan(room: GeometryRoom): Promise<Furnit
     `5. Do not place furniture against ${camWall} (camera is there)\n\n` +
     `Return JSON: { "furniture": [ ... ] }\n` +
     `Each item: { "id":"F1", "type":"sofa", "anchorWallId":"W1", "positionAlongWall":0.1, "widthM":2.1, "depthM":0.9, "heightM":0.85, "facing":"center" }\n` +
-    `Realistic sizes: sofa~2.0×0.9×0.85, bed~1.6×2.0×0.55, wardrobe~1.2×0.6×2.2, fridge~0.65×0.65×1.85, toilet~0.4×0.65×0.8, bathtub~1.7×0.75×0.6, vanity_sink~0.85×0.55×0.85, kitchen_run~[wall_width]×0.6×0.9`;
+    `Use these exact type names so the render colors them correctly: sofa, bed, wardrobe, nightstand, tv_unit, ` +
+    `coffee_table, shelving, console_table, kitchen_run, upper_cabinets, fridge, sink_kitchen, stove, ` +
+    `bathtub, shower, toilet, vanity_sink, corner_sink.\n` +
+    `For wall-mounted items (upper_cabinets) set "yOffsetM" to the floor clearance (e.g. 1.5).\n` +
+    `Kitchen work sequence along one wall: fridge → sink_kitchen → prep gap → stove, with kitchen_run as the base counter and upper_cabinets above it.\n` +
+    `Realistic sizes: sofa~2.0×0.9×0.85, bed~1.6×2.0×0.55, wardrobe~1.2×0.6×2.2, fridge~0.65×0.65×1.85, ` +
+    `sink_kitchen~0.8×0.6×0.9, stove~0.6×0.6×0.9, kitchen_run~[wall_width]×0.6×0.9, upper_cabinets~[wall_width]×0.35×0.7 (yOffsetM 1.5), ` +
+    `toilet~0.4×0.65×0.8, bathtub~1.7×0.75×0.6, shower~0.9×0.9×2.0, vanity_sink~0.85×0.55×0.85, corner_sink~0.4×0.4×0.8`;
 
   try {
     const completion = await getGroq().chat.completions.create({
