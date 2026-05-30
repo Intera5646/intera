@@ -19,9 +19,11 @@ async function callKimi(params: {
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
   temperature?: number;
   max_tokens?: number;
+  label?: string;
 }): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured');
+  const { label, ...apiParams } = params;
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -29,14 +31,22 @@ async function callKimi(params: {
       Authorization: `Bearer ${apiKey}`,
       'HTTP-Referer': 'https://intera.vercel.app',
     },
-    body: JSON.stringify({ model: 'moonshotai/kimi-k2.6', ...params }),
+    body: JSON.stringify({ model: 'moonshotai/kimi-k2.6', reasoning: { enabled: false }, ...apiParams }),
   });
   const data = await res.json() as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
     error?: { message: string };
   };
   if (!res.ok || data.error) throw new Error(data.error?.message ?? `OpenRouter HTTP ${res.status}`);
-  return data.choices?.[0]?.message?.content ?? '{}';
+  const msg = data.choices?.[0]?.message;
+  const raw =
+    (typeof msg?.content === 'string' && msg.content.length > 0 ? msg.content : '')
+    || msg?.reasoning_content
+    || '{}';
+  // Strip markdown code fences if model wraps the JSON response
+  const result = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim() || '{}';
+  console.log(`[callKimi${label ? ':' + label : ''}]`, result.slice(0, 200));
+  return result;
 }
 
 export interface RoomPrompt {
@@ -126,6 +136,7 @@ export async function generateDesignerText(params: {
     ],
     temperature: 0.65,
     max_tokens: 900,
+    label: 'generateDesignerText',
   });
   return JSON.parse(content) as DesignerText;
 }
@@ -229,6 +240,7 @@ export async function buildDesignBrief(params: {
       ],
       temperature: 0.6,
       max_tokens: 1800,
+      label: 'buildDesignBrief',
     });
     return JSON.parse(content) as DesignBrief;
   };
@@ -313,6 +325,7 @@ For each room return this JSON array:
       ],
       temperature: 0.6,
       max_tokens: 400 * params.rooms.length + 200,
+      label: 'buildRoomPrompts',
     });
     // Kimi may wrap arrays in an object — unwrap if needed
     const parsed = JSON.parse(content) as Record<string, unknown> | RoomPrompt[];
@@ -552,6 +565,7 @@ export async function buildWallAwareBrief(
       ],
       temperature: 0.35,
       max_tokens: 450,
+      label: `buildWallAwareBrief:${room.type}`,
     });
     const parsed = JSON.parse(raw) as { prompt?: string; negative_prompt?: string };
 
@@ -677,6 +691,7 @@ ${wishesClause}
     ],
     temperature: 0.6,
     max_tokens: 1200,
+    label: 'buildApartmentReport',
   });
   const designerText = JSON.parse(content) as DesignerText;
 
@@ -837,6 +852,7 @@ export async function buildRoomFurniturePlan(room: GeometryRoom): Promise<Furnit
       ],
       temperature: 0.3,
       max_tokens: 800,
+      label: `buildRoomFurniturePlan:${room.name}`,
     });
     const parsed = JSON.parse(raw) as { furniture?: unknown };
     const validated = validateFurnitureResponse(parsed.furniture, room);
