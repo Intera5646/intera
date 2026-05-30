@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { ApartmentGeometry } from '../../../../lib/geometry/types';
+import type { ApartmentGeometry, FurnitureItem } from '../../../../lib/geometry/types';
 import { createClient } from '@supabase/supabase-js';
+import FloorPlanSVG from '../../../../components/FloorPlanSVG';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -323,6 +324,8 @@ export default function NewProjectPage() {
   const [btiRoomsJson, setBtiRoomsJson] = useState('');
   const [btiGeometryJson, setBtiGeometryJson] = useState<Record<string, unknown> | null>(null);
   const [editableGeometry, setEditableGeometry] = useState<ApartmentGeometry | null>(null);
+  const [furnitureByRoom, setFurnitureByRoom] = useState<Record<string, FurnitureItem[]>>({});
+  const [furnitureLoading, setFurnitureLoading] = useState(false);
   const [btiAnalysisError, setBtiAnalysisError] = useState(false);
   const [dragPhoto, setDragPhoto] = useState(false);
   const [dragBti, setDragBti] = useState(false);
@@ -385,6 +388,40 @@ export default function NewProjectPage() {
 
   useEffect(() => {
     if (btiGeometryJson) setEditableGeometry(btiGeometryJson as unknown as ApartmentGeometry);
+  }, [btiGeometryJson]);
+
+  useEffect(() => {
+    if (!btiGeometryJson) {
+      setFurnitureByRoom({});
+      setFurnitureLoading(false);
+      return;
+    }
+    const geo = btiGeometryJson as unknown as ApartmentGeometry;
+    if (!geo?.rooms?.length) return;
+    setFurnitureByRoom({});
+    setFurnitureLoading(true);
+    let cancelled = false;
+    let remaining = geo.rooms.length;
+    geo.rooms.forEach((room) => {
+      fetch('/api/furniture-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room, style, budget }),
+      })
+        .then((r) => r.json() as Promise<{ furniture?: FurnitureItem[] }>)
+        .then((d) => {
+          if (!cancelled && Array.isArray(d.furniture)) {
+            setFurnitureByRoom((prev) => ({ ...prev, [room.id]: d.furniture as FurnitureItem[] }));
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          remaining -= 1;
+          if (!cancelled && remaining <= 0) setFurnitureLoading(false);
+        });
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [btiGeometryJson]);
 
   // ── Fetch balance on confirmation step ────────────────────────────────────
@@ -514,6 +551,8 @@ export default function NewProjectPage() {
     setBtiRoomsJson('');
     setBtiGeometryJson(null);
     setEditableGeometry(null);
+    setFurnitureByRoom({});
+    setFurnitureLoading(false);
     setBtiAnalyzing(false);
     setBtiAnalysisError(false);
   };
@@ -786,6 +825,16 @@ export default function NewProjectPage() {
               planImageUrl={btiEntry?.uploadedUrl ?? btiEntry?.previewUrl ?? ''}
               onChange={(updated) => setEditableGeometry(updated)}
             />
+            <div style={{ marginTop: 24 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 12 }}>
+                2D план с мебелью
+              </div>
+              <FloorPlanSVG
+                rooms={editableGeometry.rooms}
+                furnitureByRoom={furnitureByRoom}
+                loading={furnitureLoading}
+              />
+            </div>
           </>
         )}
         {step === 2 && hasBtiFile && !editableGeometry && (

@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
 
   if (openRouterKey) {
     try {
-      console.log('[analyze:openrouter] Calling qwen/qwen3-vl-235b-a22b-instruct with base64 image...');
+      console.log('[analyze:openrouter] Calling moonshotai/kimi-k2.6 with base64 image...');
       const t0 = Date.now();
       const result = await analyzeWithOpenRouter(base64DataUrl, openRouterKey);
       const elapsed = Date.now() - t0;
@@ -136,27 +136,25 @@ export async function POST(req: NextRequest) {
     console.log('[analyze] Skipping OpenRouter (no API key)');
   }
 
-  if (groqKey) {
+  if (openRouterKey) {
     try {
-      console.log('[analyze:groq] Calling Groq vision fallback with base64 image...');
+      console.log('[analyze:kimi-fallback] Calling Kimi K2.6 single-call fallback with base64 image...');
       const t0 = Date.now();
-      const result = await analyzeWithGroq(base64DataUrl, groqKey);
+      const result = await analyzeWithKimiFallback(base64DataUrl, openRouterKey);
       const elapsed = Date.now() - t0;
       if (result) {
         console.log(
-          `[analyze:groq] SUCCESS in ${elapsed}ms — roomCount: ${result.roomCount} | rooms: ${result.room_names.join(', ')} | geometry: ${result.geometry_json ? 'yes' : 'no'}`
+          `[analyze:kimi-fallback] SUCCESS in ${elapsed}ms — roomCount: ${result.roomCount} | rooms: ${result.room_names.join(', ')} | geometry: ${result.geometry_json ? 'yes' : 'no'}`
         );
         return NextResponse.json({ success: true, ...result });
       }
-      console.warn(`[analyze:groq] Returned null result after ${elapsed}ms`);
+      console.warn(`[analyze:kimi-fallback] Returned null result after ${elapsed}ms`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : undefined;
-      console.error('[analyze:groq] FAILED:', msg);
-      if (stack) console.error('[analyze:groq] stack:', stack);
+      console.error('[analyze:kimi-fallback] FAILED:', msg);
+      if (stack) console.error('[analyze:kimi-fallback] stack:', stack);
     }
-  } else {
-    console.log('[analyze] Skipping Groq (no API key)');
   }
 
   console.warn('[analyze] Both providers failed — returning safe default roomCount:1');
@@ -597,13 +595,13 @@ function parseWallDetailsResponse(content: string): WallDetailsData | null {
   }
 }
 
-// ── OpenRouter Qwen3-VL-235B (two sequential calls) ───────────────────────────
+// ── OpenRouter Kimi K2.6 (two sequential calls) ───────────────────────────────
 
 async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Promise<AnalysisResult | null> {
   const headers = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${apiKey}`,
-    'HTTP-Referer': 'https://intera.app',
+    'HTTP-Referer': 'https://intera.vercel.app',
     'X-Title': 'INTERA Floor Plan Analyzer',
   };
 
@@ -613,7 +611,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
     method: 'POST',
     headers,
     body: JSON.stringify({
-      model: 'qwen/qwen3-vl-235b-a22b-instruct',
+      model: 'moonshotai/kimi-k2.6',
       messages: [{ role: 'user', content: [
         { type: 'image_url', image_url: { url: base64DataUrl } },
         { type: 'text', text: PROMPT_ROOMS_ONLY },
@@ -650,7 +648,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
       method: 'POST',
       headers,
       body: JSON.stringify({
-        model: 'qwen/qwen3-vl-235b-a22b-instruct',
+        model: 'moonshotai/kimi-k2.6',
         messages: [{ role: 'user', content: [
           { type: 'image_url', image_url: { url: base64DataUrl } },
           { type: 'text', text: buildWallDetailsPrompt(roomsData.rooms) },
@@ -742,57 +740,52 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
   };
 }
 
-// ── Groq vision models ────────────────────────────────────────────────────────
+// ── Kimi K2.6 single-call fallback (via OpenRouter) ──────────────────────────
 
-const GROQ_VISION_MODELS = [
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-] as const;
+async function analyzeWithKimiFallback(base64DataUrl: string, apiKey: string): Promise<AnalysisResult | null> {
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://intera.vercel.app',
+        'X-Title': 'INTERA Floor Plan Analyzer',
+      },
+      body: JSON.stringify({
+        model: 'moonshotai/kimi-k2.6',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: base64DataUrl } },
+              { type: 'text', text: USER_PROMPT },
+            ],
+          },
+        ],
+        max_tokens: 4096,
+        temperature: 0,
+      }),
+    });
 
-async function analyzeWithGroq(base64DataUrl: string, apiKey: string): Promise<AnalysisResult | null> {
-  for (const model of GROQ_VISION_MODELS) {
-    try {
-      console.log('[analyze] Trying Groq model:', model);
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'image_url', image_url: { url: base64DataUrl } },
-                { type: 'text', text: USER_PROMPT },
-              ],
-            },
-          ],
-          max_tokens: 4096,
-          temperature: 0,
-        }),
-      });
+    const responseText = await res.text();
+    console.log(`[analyze:kimi-fallback] HTTP ${res.status} | response length: ${responseText.length} chars`);
 
-      const responseText = await res.text();
-      console.log(`[analyze:groq:${model}] HTTP ${res.status} | response length: ${responseText.length} chars`);
-
-      if (!res.ok) {
-        console.warn(`[analyze:groq:${model}] Failed:`, responseText.slice(0, 300));
-        continue;
-      }
-
-      const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
-      const content = data?.choices?.[0]?.message?.content ?? '';
-      console.log(`[analyze:groq:${model}] Raw model response — length: ${content.length} chars | first 500: ${content.slice(0, 500)}`);
-      const result = parseAnalysisResponse(content);
-      if (result) {
-        result.debug_raw_response = content.slice(0, 1000);
-        return result;
-      }
-    } catch (err) {
-      console.warn('[analyze] Groq', model, 'threw:', err instanceof Error ? err.message : err);
+    if (!res.ok) {
+      console.warn('[analyze:kimi-fallback] Failed:', responseText.slice(0, 300));
+      return null;
     }
+
+    const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data?.choices?.[0]?.message?.content ?? '';
+    console.log(`[analyze:kimi-fallback] Raw response — length: ${content.length} chars | first 500: ${content.slice(0, 500)}`);
+    const result = parseAnalysisResponse(content);
+    if (result) {
+      result.debug_raw_response = content.slice(0, 1000);
+      return result;
+    }
+  } catch (err) {
+    console.warn('[analyze:kimi-fallback] threw:', err instanceof Error ? err.message : err);
   }
   return null;
 }

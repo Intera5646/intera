@@ -5,13 +5,38 @@ import type { GeometryRoom, RoomInfo, FurnitureObject } from '../geometry/types'
 export type { RoomInfo } from '../geometry/types';
 export type { FurnitureObject } from '../geometry/types';
 
+// groq-sdk kept in package.json — do not remove yet
 let groqClient: Groq | null = null;
-
 function getGroq(): Groq {
-  if (!groqClient) {
-    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
-  }
+  if (!groqClient) groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
   return groqClient;
+}
+void getGroq; // suppress unused-function warnings while groq-sdk is retained
+
+// ── Kimi K2.6 via OpenRouter ──────────────────────────────────────────────────
+
+async function callKimi(params: {
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+  temperature?: number;
+  max_tokens?: number;
+}): Promise<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured');
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': 'https://intera.vercel.app',
+    },
+    body: JSON.stringify({ model: 'moonshotai/kimi-k2.6', ...params }),
+  });
+  const data = await res.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+    error?: { message: string };
+  };
+  if (!res.ok || data.error) throw new Error(data.error?.message ?? `OpenRouter HTTP ${res.status}`);
+  return data.choices?.[0]?.message?.content ?? '{}';
 }
 
 export interface RoomPrompt {
@@ -94,18 +119,14 @@ export async function generateDesignerText(params: {
   ]
 }`;
 
-  const completion = await getGroq().chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
+  const content = await callKimi({
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
-    response_format: { type: 'json_object' },
     temperature: 0.65,
     max_tokens: 900,
   });
-
-  const content = completion.choices[0]?.message?.content ?? '{}';
   return JSON.parse(content) as DesignerText;
 }
 
@@ -201,17 +222,14 @@ export async function buildDesignBrief(params: {
   const userPrompt = `Создай дизайн-бриф для следующего проекта:\n\n${lines.join('\n')}`;
 
   const attemptParse = async (prompt: string): Promise<DesignBrief> => {
-    const completion = await getGroq().chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+    const content = await callKimi({
       messages: [
         { role: 'system', content: BRIEF_SYSTEM_PROMPT },
         { role: 'user', content: prompt },
       ],
-      response_format: { type: 'json_object' },
       temperature: 0.6,
       max_tokens: 1800,
     });
-    const content = completion.choices[0]?.message?.content ?? '{}';
     return JSON.parse(content) as DesignBrief;
   };
 
@@ -288,18 +306,15 @@ For each room return this JSON array:
 ]`;
 
   const attemptParse = async (prompt: string): Promise<RoomPrompt[]> => {
-    const completion = await getGroq().chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+    const content = await callKimi({
       messages: [
         { role: 'system', content: ROOM_BRIEF_SYSTEM },
         { role: 'user', content: prompt },
       ],
-      response_format: { type: 'json_object' },
       temperature: 0.6,
       max_tokens: 400 * params.rooms.length + 200,
     });
-    const content = completion.choices[0]?.message?.content ?? '{}';
-    // Groq json_object mode wraps arrays — unwrap if needed
+    // Kimi may wrap arrays in an object — unwrap if needed
     const parsed = JSON.parse(content) as Record<string, unknown> | RoomPrompt[];
     if (Array.isArray(parsed)) return parsed as RoomPrompt[];
     // Find the first array value in the object
@@ -530,30 +545,26 @@ export async function buildWallAwareBrief(
     `}`;
 
   try {
-    const completion = await getGroq().chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+    const raw = await callKimi({
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      response_format: { type: 'json_object' },
       temperature: 0.35,
       max_tokens: 450,
     });
-
-    const raw = completion.choices[0]?.message?.content ?? '{}';
     const parsed = JSON.parse(raw) as { prompt?: string; negative_prompt?: string };
 
     if (parsed.prompt && parsed.prompt.length > 20) {
-      console.log('[buildWallAwareBrief] Groq ok — prompt:', parsed.prompt.length, 'chars | room:', room.type, `${area.toFixed(0)}m²`);
+      console.log('[buildWallAwareBrief] Kimi ok — prompt:', parsed.prompt.length, 'chars | room:', room.type, `${area.toFixed(0)}m²`);
       return {
         prompt:         parsed.prompt,
         negativePrompt: parsed.negative_prompt ?? FLUX_NEGATIVE_PROMPT,
       };
     }
-    console.warn('[buildWallAwareBrief] Groq returned empty prompt, using fallback');
+    console.warn('[buildWallAwareBrief] Kimi returned empty prompt, using fallback');
   } catch (err) {
-    console.warn('[buildWallAwareBrief] Groq failed, using fallback:', err instanceof Error ? err.message : err);
+    console.warn('[buildWallAwareBrief] Kimi failed, using fallback:', err instanceof Error ? err.message : err);
   }
 
   const fallback = wallAwareFallback(params, lightingDesc);
@@ -659,18 +670,14 @@ ${wishesClause}
   ]
 }`;
 
-  const completion = await getGroq().chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
+  const content = await callKimi({
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
-    response_format: { type: 'json_object' },
     temperature: 0.6,
     max_tokens: 1200,
   });
-
-  const content = completion.choices[0]?.message?.content ?? '{}';
   const designerText = JSON.parse(content) as DesignerText;
 
   const reportText = [
@@ -823,18 +830,14 @@ export async function buildRoomFurniturePlan(room: GeometryRoom): Promise<Furnit
     `toilet~0.4×0.65×0.8, bathtub~1.7×0.75×0.6, shower~0.9×0.9×2.0, vanity_sink~0.85×0.55×0.85, corner_sink~0.4×0.4×0.8`;
 
   try {
-    const completion = await getGroq().chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+    const raw = await callKimi({
       messages: [
         { role: 'system', content: 'You are an interior designer placing furniture. Return only valid JSON.' },
         { role: 'user', content: userPrompt },
       ],
-      response_format: { type: 'json_object' },
       temperature: 0.3,
       max_tokens: 800,
     });
-
-    const raw = completion.choices[0]?.message?.content ?? '{}';
     const parsed = JSON.parse(raw) as { furniture?: unknown };
     const validated = validateFurnitureResponse(parsed.furniture, room);
 

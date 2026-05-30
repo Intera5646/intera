@@ -66,6 +66,17 @@ export interface ApartmentGeometry {
   rooms: GeometryRoom[];
 }
 
+/** 2D floor-plan furniture item returned by /api/furniture-plan. */
+export interface FurnitureItem {
+  name: string;
+  x_mm: number;
+  y_mm: number;
+  width_mm: number;
+  depth_mm: number;
+  rotation: 0 | 90 | 180 | 270;
+  color: string;
+}
+
 /** A piece of furniture anchored to a wall, represented as an AABB in room space. */
 export interface FurnitureObject {
   id: string;
