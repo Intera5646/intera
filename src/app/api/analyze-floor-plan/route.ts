@@ -173,6 +173,14 @@ export async function POST(req: NextRequest) {
 // Step 1 user prompt: image → free-text description (NO JSON requested)
 const STEP1_PROMPT = `Analyze this floor plan thoroughly.
 
+Before describing anything, count all distinct enclosed spaces visible on the plan and write: 'I count N spaces.'
+
+Then describe each space as a numbered list:
+Space 1: ...
+Space 2: ...
+
+Each space gets its own numbered entry — never combine two spaces into one entry.
+
 For every enclosed space clearly bounded by walls:
 - Read the exact dimension numbers printed on the drawing (in mm)
 - Describe its location: left side / right side / center / top / bottom
