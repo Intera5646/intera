@@ -612,6 +612,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
     headers,
     body: JSON.stringify({
       model: 'moonshotai/kimi-k2.6',
+      reasoning: { enabled: false },
       messages: [{ role: 'user', content: [
         { type: 'image_url', image_url: { url: base64DataUrl } },
         { type: 'text', text: PROMPT_ROOMS_ONLY },
@@ -628,10 +629,12 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
     throw new Error(`OpenRouter Call 1 HTTP ${res1.status}: ${text1.slice(0, 300)}`);
   }
 
-  const data1 = JSON.parse(text1) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+  const data1 = JSON.parse(text1) as { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>; error?: { message?: string } };
   if (data1.error) throw new Error(`OpenRouter Call 1 API error: ${data1.error.message}`);
 
-  const content1 = data1?.choices?.[0]?.message?.content ?? '';
+  const content1 = data1?.choices?.[0]?.message?.content
+    || data1?.choices?.[0]?.message?.reasoning_content
+    || '';
   const roomsData = parseRoomsOnlyResponse(content1);
   if (!roomsData || roomsData.rooms.length === 0) {
     console.warn('[analyze:openrouter] Call 1 returned no rooms — falling back to Groq');
@@ -649,6 +652,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
       headers,
       body: JSON.stringify({
         model: 'moonshotai/kimi-k2.6',
+        reasoning: { enabled: false },
         messages: [{ role: 'user', content: [
           { type: 'image_url', image_url: { url: base64DataUrl } },
           { type: 'text', text: buildWallDetailsPrompt(roomsData.rooms) },
@@ -662,8 +666,10 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
     console.log(`[analyze:openrouter] Call 2 HTTP ${res2.status} | length: ${text2.length}`);
 
     if (res2.ok) {
-      const data2 = JSON.parse(text2) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
-      const content2 = data2?.choices?.[0]?.message?.content ?? '';
+      const data2 = JSON.parse(text2) as { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>; error?: { message?: string } };
+      const content2 = data2?.choices?.[0]?.message?.content
+        || data2?.choices?.[0]?.message?.reasoning_content
+        || '';
       const wallDetails = parseWallDetailsResponse(content2);
       if (wallDetails) {
         for (const room of wallDetails.rooms) {
@@ -754,6 +760,7 @@ async function analyzeWithKimiFallback(base64DataUrl: string, apiKey: string): P
       },
       body: JSON.stringify({
         model: 'moonshotai/kimi-k2.6',
+        reasoning: { enabled: false },
         messages: [
           {
             role: 'user',
@@ -776,8 +783,10 @@ async function analyzeWithKimiFallback(base64DataUrl: string, apiKey: string): P
       return null;
     }
 
-    const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data?.choices?.[0]?.message?.content ?? '';
+    const data = JSON.parse(responseText) as { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }> };
+    const content = data?.choices?.[0]?.message?.content
+      || data?.choices?.[0]?.message?.reasoning_content
+      || '';
     console.log(`[analyze:kimi-fallback] Raw response — length: ${content.length} chars | first 500: ${content.slice(0, 500)}`);
     const result = parseAnalysisResponse(content);
     if (result) {
