@@ -23,7 +23,7 @@ import {
   type RoomPrompt,
 } from '../../../lib/ai/groq';
 import { generateSemanticRenderBuffer } from '../../../lib/geometry/depthMap';
-import type { ApartmentGeometry, GeometryRoom } from '../../../lib/geometry/types';
+import type { ApartmentGeometry, GeometryRoom, GeneralPreferences, RoomPreference } from '../../../lib/geometry/types';
 import { STYLE_PROMPTS, ROOM_PROMPTS, BUDGET_PROMPTS } from '../../../lib/data/zones_index';
 
 // Allow long-running background generation on Vercel
@@ -89,6 +89,20 @@ export async function POST(req: NextRequest) {
     const needsWorkspace      = String(body.needs_workspace ?? '').trim() || null;
     const lightingPreference  = String(body.lighting_preference ?? '').trim() || null;
     const dislikedColors      = String(body.disliked_colors ?? '').trim() || null;
+
+    const generalPrefs: GeneralPreferences | null =
+      body.general_prefs && typeof body.general_prefs === 'object'
+        ? (body.general_prefs as GeneralPreferences)
+        : null;
+    const roomPrefsArr: RoomPreference[] =
+      Array.isArray(body.room_prefs) ? (body.room_prefs as RoomPreference[]) : [];
+
+    // Enrich wishes with generalPrefs context
+    const enrichedWishes = [
+      wishes,
+      generalPrefs?.colorPreferences ? `Цвета: ${generalPrefs.colorPreferences}` : '',
+      generalPrefs?.generalNotes ?? '',
+    ].filter(Boolean).join('. ');
 
     console.log('[generate] Step 2b: parsed fields — roomType:', roomType, '| style:', style, '| budget:', budget, '| planImageUrl:', planImageUrl.slice(0, 60));
 
@@ -272,8 +286,8 @@ export async function POST(req: NextRequest) {
       uploadType,
       style,
       budget,
-      wishes,
-      ceilingHeight,
+      wishes: enrichedWishes,
+      ceilingHeight: generalPrefs?.defaultCeilingHeight ?? ceilingHeight,
       planImageUrl,
       isAdmin,
       roomCount,
@@ -284,6 +298,8 @@ export async function POST(req: NextRequest) {
       needsWorkspace,
       lightingPreference,
       dislikedColors,
+      generalPrefs,
+      roomPrefs: roomPrefsArr,
     }));
 
     console.log('[generate] Step 11: returning success { generationId, projectId }');
@@ -325,6 +341,8 @@ type RunGenerationParams = {
   needsWorkspace: string | null;
   lightingPreference: string | null;
   dislikedColors: string | null;
+  generalPrefs: GeneralPreferences | null;
+  roomPrefs: RoomPreference[];
 };
 
 // ── Main generation dispatcher ────────────────────────────────────────────────
@@ -840,6 +858,7 @@ async function runBtiRoomV2(opts: {
   params: RunGenerationParams;
 }): Promise<{ renderUrls: string[]; cameraMeta: CameraMetaEntry }> {
   const { room, params } = opts;
+  const roomPref = params.roomPrefs.find((p) => p.roomId === room.id) ?? null;
   const camIdx = 0;
 
   // FIX 5: clamp tiny rooms (narrow balconies, wc) to minimum 1.5 m sides so
@@ -883,11 +902,17 @@ async function runBtiRoomV2(opts: {
   console.log(`[BTI-v2:${room.name}] Semantic render →`, controlImageUrl.slice(0, 80));
 
   // Step D: build wall-aware Groq prompt with frame contract
+  const roomWishes = [
+    params.wishes,
+    roomPref && !roomPref.inheritFromGeneral && roomPref.styleNotes ? roomPref.styleNotes : '',
+    roomPref?.specialRequirements ?? '',
+  ].filter(Boolean).join('. ');
+  const roomCeiling = roomPref?.ceilingHeightOverride ?? params.ceilingHeight;
   const { prompt, negativePrompt } = await buildWallAwareBrief({
-    room: sanitizedRoom,
+    room: { ...sanitizedRoom, dimensions: { ...sanitizedRoom.dimensions, height_m: roomCeiling } },
     style: params.style,
     budget: params.budget,
-    wishes: params.wishes || undefined,
+    wishes: roomWishes || undefined,
     cameraIndex: camIdx,
     furniture,
   });

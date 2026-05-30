@@ -189,8 +189,8 @@ Return ONLY valid JSON, no markdown, no explanation:
   "ceiling_height_m": 2.7,
   "orientation": "south",
   "rooms": [
-    { "id": "R1", "name": "Гостиная", "type": "living", "width_m": 3.8, "length_m": 5.2, "size_category": "large" },
-    { "id": "R2", "name": "Спальня", "type": "bedroom", "width_m": 3.0, "length_m": 4.0, "size_category": "medium" }
+    { "id": "R1", "name": "Гостиная", "type": "living", "width_m": 3.8, "length_m": 5.2, "size_category": "large", "type_hint": null },
+    { "id": "R2", "name": "Спальня", "type": "bedroom", "width_m": 3.0, "length_m": 4.0, "size_category": "medium", "type_hint": null }
   ]
 }
 
@@ -200,7 +200,9 @@ Valid orientation: north, south, east, west, unknown
 
 CRITICAL: Count EVERY enclosed space independently. A typical Russian apartment has 4-8 rooms: living room, 1-3 bedrooms, kitchen, hallway, bathroom, WC, and possibly balcony/storage. If you detect only 1-2 rooms, you have made an error — re-examine the plan carefully, trace every set of walls that forms a closed polygon, and list each one separately.
 
-IMPORTANT: A typical Russian apartment has 4-8 rooms. If you see only 1-2, recount carefully.`;
+IMPORTANT: A typical Russian apartment has 4-8 rooms. If you see only 1-2, recount carefully.
+
+Additionally, look for clear visual symbols that strongly suggest a specific room function, independent of size or position: a bathtub/shower symbol → set type_hint to "bathroom"; a stove/oven symbol → set type_hint to "kitchen"; a very narrow corridor connecting rooms → set type_hint to "hallway"; a slab attached to the exterior wall with no enclosed ceiling → set type_hint to "balcony". Only set type_hint when the symbol is unambiguous. Otherwise set type_hint to null. This is a visual hint only — it does not override the type field.`;
 
 function buildWallDetailsPrompt(rooms: Array<{ id: string; name: string; width_m: number; length_m: number }>): string {
   const roomList = rooms.map(r => `  - ${r.id}: ${r.name} (${r.width_m}m × ${r.length_m}m)`).join('\n');
@@ -245,7 +247,7 @@ Return ONLY valid JSON, no markdown:
   "apartment": { "total_area_m2": 52.0, "ceiling_height_m": 2.7, "orientation": "south" },
   "rooms": [
     {
-      "id": "R1", "name": "Гостиная", "type": "living",
+      "id": "R1", "name": "Гостиная", "type": "living", "type_hint": null,
       "dimensions": { "width_m": 3.8, "length_m": 5.2, "height_m": 2.7 },
       "size_category": "large", "num_photos_needed": 2,
       "walls": [
@@ -281,7 +283,7 @@ const DEFAULT_ROOM_DIMENSIONS: Record<string, { width_m: number; length_m: numbe
 
 const VALID_ROOM_TYPES = new Set<RoomType>([
   'kitchen', 'bedroom', 'living', 'bathroom', 'wc',
-  'hallway', 'balcony', 'storage', 'studio_zone',
+  'hallway', 'balcony', 'storage', 'studio_zone', 'unknown',
 ]);
 
 function toRoomType(raw: unknown): RoomType {
@@ -367,11 +369,15 @@ function parseRoomWalls(raw: unknown, width_m: number, length_m: number): RoomWa
   });
 }
 
+const VALID_TYPE_HINTS_SET = new Set(['bathroom', 'kitchen', 'hallway', 'balcony']);
+
 function parseGeometryRoom(r: unknown, idx: number): GeometryRoom {
   const room = (r ?? {}) as Record<string, unknown>;
 
   const type = toRoomType(room.type);
   const defaults = DEFAULT_ROOM_DIMENSIONS[type] ?? { width_m: 3.0, length_m: 4.0 };
+  const rawHint = String(room.type_hint ?? '').toLowerCase().trim();
+  const type_hint = VALID_TYPE_HINTS_SET.has(rawHint) ? (rawHint as 'bathroom' | 'kitchen' | 'hallway' | 'balcony') : null;
 
   const dims = (room.dimensions ?? {}) as Record<string, unknown>;
   const width_m  = clampDim(dims.width_m  ?? dims.width,  0.5, 20) || defaults.width_m;
@@ -402,6 +408,7 @@ function parseGeometryRoom(r: unknown, idx: number): GeometryRoom {
     id:   String(room.id   ?? `R${idx + 1}`),
     name: String(room.name ?? `Комната ${idx + 1}`),
     type,
+    type_hint,
     dimensions: { width_m, length_m, height_m },
     size_category,
     num_photos_needed,
@@ -420,6 +427,7 @@ const ROOM_TYPE_TO_RUSSIAN: Record<RoomType, string> = {
   balcony:     'Балкон',
   storage:     'Кладовая',
   studio_zone: 'Кухня-гостиная',
+  unknown:     'Неизвестно',
 };
 
 function geometryRoomToRoomInfo(gr: GeometryRoom): RoomInfo {
@@ -544,7 +552,7 @@ interface RoomsOnlyData {
   total_area_m2: number;
   ceiling_height_m: number;
   orientation: string;
-  rooms: Array<{ id: string; name: string; type: string; width_m: number; length_m: number; size_category: string }>;
+  rooms: Array<{ id: string; name: string; type: string; width_m: number; length_m: number; size_category: string; type_hint: 'bathroom' | 'kitchen' | 'hallway' | 'balcony' | null }>;
 }
 
 function parseRoomsOnlyResponse(content: string): RoomsOnlyData | null {
@@ -555,9 +563,11 @@ function parseRoomsOnlyResponse(content: string): RoomsOnlyData | null {
       console.warn('[analyze:call1:parse] No rooms array:', JSON.stringify(parsed).slice(0, 200));
       return null;
     }
+    const VALID_TYPE_HINTS = new Set(['bathroom', 'kitchen', 'hallway', 'balcony']);
     const rooms = (parsed.rooms as unknown[]).map((r: unknown, idx) => {
       const room = (r ?? {}) as Record<string, unknown>;
       const dimsRaw = (room.dimensions ?? {}) as Record<string, unknown>;
+      const rawHint = String(room.type_hint ?? '').toLowerCase().trim();
       return {
         id:            String(room.id   ?? `R${idx + 1}`),
         name:          String(room.name ?? `Комната ${idx + 1}`),
@@ -565,6 +575,7 @@ function parseRoomsOnlyResponse(content: string): RoomsOnlyData | null {
         width_m:       clampDim(room.width_m  ?? dimsRaw.width_m,  0.5, 20),
         length_m:      clampDim(room.length_m ?? dimsRaw.length_m, 0.5, 20),
         size_category: String(room.size_category ?? 'medium'),
+        type_hint:     VALID_TYPE_HINTS.has(rawHint) ? (rawHint as 'bathroom' | 'kitchen' | 'hallway' | 'balcony') : null,
       };
     });
     return {
@@ -715,6 +726,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
       id:   r.id,
       name: r.name,
       type,
+      type_hint: r.type_hint,
       dimensions: { width_m, length_m, height_m },
       size_category,
       num_photos_needed,

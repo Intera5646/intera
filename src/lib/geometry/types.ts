@@ -26,7 +26,8 @@ export type RoomType =
   | 'hallway'
   | 'balcony'
   | 'storage'
-  | 'studio_zone';
+  | 'studio_zone'
+  | 'unknown';
 
 export type SizeCategory = 'small' | 'medium' | 'large';
 
@@ -40,6 +41,7 @@ export interface GeometryRoom {
   id: string;
   name: string;
   type: RoomType;
+  type_hint?: 'bathroom' | 'kitchen' | 'hallway' | 'balcony' | null;
   dimensions: RoomDimensions;
   size_category: SizeCategory;
   num_photos_needed: 1 | 2;
@@ -64,6 +66,22 @@ export interface ApartmentGeometry {
     orientation: 'north' | 'south' | 'east' | 'west' | 'unknown';
   };
   rooms: GeometryRoom[];
+}
+
+export interface GeneralPreferences {
+  style: 'modern' | 'scandinavian' | 'classic' | 'loft' | 'minimalist' | 'eclectic';
+  budget: 'economy' | 'standard' | 'premium';
+  defaultCeilingHeight: number;
+  colorPreferences?: string;
+  generalNotes?: string;
+}
+
+export interface RoomPreference {
+  roomId: string;
+  ceilingHeightOverride?: number;
+  styleNotes?: string;
+  specialRequirements?: string;
+  inheritFromGeneral: boolean;
 }
 
 /** 2D floor-plan furniture item returned by /api/furniture-plan. */
