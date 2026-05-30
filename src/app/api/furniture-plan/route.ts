@@ -82,6 +82,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: 'moonshotai/kimi-k2.6',
+        reasoning: { enabled: false },
         messages: [{ role: 'user', content: userPrompt }],
         temperature: 0.3,
         max_tokens: 1500,
@@ -89,11 +90,15 @@ export async function POST(req: NextRequest) {
     });
 
     const data = await res.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
       error?: { message: string };
     };
 
-    const raw = data.choices?.[0]?.message?.content ?? '';
+    // Kimi K2.6 may return its output in reasoning_content with content empty
+    const raw = data.choices?.[0]?.message?.content
+      || data.choices?.[0]?.message?.reasoning_content
+      || '';
+    console.log('[furniture-plan] raw response for', room.name, ':', raw.slice(0, 400));
 
     // Extract JSON array from response (model may wrap in prose)
     const firstBracket = raw.indexOf('[');

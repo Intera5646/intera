@@ -452,8 +452,13 @@ export default function NewProjectPage() {
           body: JSON.stringify({ room, style: styleVal, budget: budgetVal }),
         });
         const d = await r.json() as { furniture?: FurnitureItem[] };
+        console.log('[furniture] room', room.id, room.name, '→', d.furniture?.length ?? 0, 'items');
         if (Array.isArray(d.furniture)) {
-          setFurnitureByRoom((prev) => ({ ...prev, [room.id]: d.furniture as FurnitureItem[] }));
+          setFurnitureByRoom((prev) => {
+            const next = { ...prev, [room.id]: d.furniture as FurnitureItem[] };
+            console.log('[furniture] furnitureByRoom now keyed:', Object.keys(next));
+            return next;
+          });
         }
       } catch {
         // continue to next room on error
