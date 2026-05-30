@@ -27,7 +27,15 @@ export type RoomType =
   | 'balcony'
   | 'storage'
   | 'studio_zone'
-  | 'unknown';
+  | 'unknown'
+  | 'combined_bathroom'
+  | 'corridor'
+  | 'dressing_room'
+  | 'loggia'
+  | 'kitchen_living'
+  | 'kids_room'
+  | 'laundry'
+  | 'vestibule';
 
 export type SizeCategory = 'small' | 'medium' | 'large';
 

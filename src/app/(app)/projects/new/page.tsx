@@ -75,29 +75,45 @@ const LIGHTING_OPTS: SelectOption[] = [
 ];
 
 const CONFIRM_ROOM_TYPE_LABELS: Record<string, string> = {
-  living: 'Гостиная',
-  bedroom: 'Спальня',
-  kitchen: 'Кухня',
-  bathroom: 'Ванная',
-  wc: 'Туалет',
-  hallway: 'Прихожая',
-  balcony: 'Балкон',
-  storage: 'Кладовая',
-  studio_zone: 'Студия',
-  unknown: '— Выберите тип —',
+  living:            'Гостиная',
+  bedroom:           'Спальня',
+  kitchen:           'Кухня',
+  kitchen_living:    'Кухня-гостиная',
+  kids_room:         'Детская',
+  bathroom:          'Ванная',
+  wc:                'Туалет',
+  combined_bathroom: 'Совмещённый санузел',
+  laundry:           'Постирочная',
+  hallway:           'Прихожая',
+  corridor:          'Коридор',
+  vestibule:         'Тамбур',
+  balcony:           'Балкон',
+  loggia:            'Лоджия',
+  storage:           'Кладовая',
+  dressing_room:     'Гардеробная',
+  studio_zone:       'Студия',
+  unknown:           '— Выберите тип —',
 };
 
 const CONFIRM_ROOM_TYPE_COLORS: Record<string, string> = {
-  living: '#C8E6C9',
-  bedroom: '#BBDEFB',
-  kitchen: '#FFECB3',
-  bathroom: '#E1BEE7',
-  wc: '#F3E5F5',
-  hallway: '#EEEEEE',
-  balcony: '#B2EBF2',
-  storage: '#D7CCC8',
-  studio_zone: '#E8F5E9',
-  unknown: '#E0E0E0',
+  living:            '#C8E6C9',
+  bedroom:           '#BBDEFB',
+  kitchen:           '#FFECB3',
+  kitchen_living:    '#FFE082',
+  kids_room:         '#B3E5FC',
+  bathroom:          '#E1BEE7',
+  wc:                '#F3E5F5',
+  combined_bathroom: '#CE93D8',
+  laundry:           '#EDE7F6',
+  hallway:           '#EEEEEE',
+  corridor:          '#F5F5F5',
+  vestibule:         '#E8EAF6',
+  balcony:           '#B2EBF2',
+  loggia:            '#80DEEA',
+  storage:           '#D7CCC8',
+  dressing_room:     '#F8BBD0',
+  studio_zone:       '#E8F5E9',
+  unknown:           '#E0E0E0',
 };
 
 const TYPE_HINT_LABELS: Record<string, string> = {
@@ -107,11 +123,26 @@ const TYPE_HINT_LABELS: Record<string, string> = {
   balcony: 'Балкон',
 };
 
+// Ordered options for the type dropdown
 const CONFIRM_ROOM_TYPE_OPTIONS: SelectOption[] = [
-  { id: 'unknown', label: '— Выберите тип —' },
-  ...Object.entries(CONFIRM_ROOM_TYPE_LABELS)
-    .filter(([id]) => id !== 'unknown')
-    .map(([id, label]) => ({ id, label })),
+  { id: 'unknown',           label: '— Выберите тип —' },
+  { id: 'living',            label: 'Гостиная' },
+  { id: 'bedroom',           label: 'Спальня' },
+  { id: 'kitchen',           label: 'Кухня' },
+  { id: 'kitchen_living',    label: 'Кухня-гостиная' },
+  { id: 'kids_room',         label: 'Детская' },
+  { id: 'bathroom',          label: 'Ванная' },
+  { id: 'wc',                label: 'Туалет' },
+  { id: 'combined_bathroom', label: 'Совмещённый санузел' },
+  { id: 'laundry',           label: 'Постирочная' },
+  { id: 'hallway',           label: 'Прихожая' },
+  { id: 'corridor',          label: 'Коридор' },
+  { id: 'vestibule',         label: 'Тамбур' },
+  { id: 'balcony',           label: 'Балкон' },
+  { id: 'loggia',            label: 'Лоджия' },
+  { id: 'storage',           label: 'Кладовая' },
+  { id: 'dressing_room',     label: 'Гардеробная' },
+  { id: 'studio_zone',       label: 'Студия' },
 ];
 
 const TOTAL_STEPS = 5; // 4 main + 1 confirmation

@@ -285,6 +285,8 @@ const DEFAULT_ROOM_DIMENSIONS: Record<string, { width_m: number; length_m: numbe
 const VALID_ROOM_TYPES = new Set<RoomType>([
   'kitchen', 'bedroom', 'living', 'bathroom', 'wc',
   'hallway', 'balcony', 'storage', 'studio_zone', 'unknown',
+  'combined_bathroom', 'corridor', 'dressing_room', 'loggia',
+  'kitchen_living', 'kids_room', 'laundry', 'vestibule',
 ]);
 
 function toRoomType(raw: unknown): RoomType {
@@ -419,17 +421,39 @@ function parseGeometryRoom(r: unknown, idx: number): GeometryRoom {
 }
 
 const ROOM_TYPE_TO_RUSSIAN: Record<RoomType, string> = {
-  kitchen:     'Кухня',
-  bedroom:     'Спальня',
-  living:      'Гостиная',
-  bathroom:    'Ванная',
-  wc:          'Туалет',
-  hallway:     'Прихожая',
-  balcony:     'Балкон',
-  storage:     'Кладовая',
-  studio_zone: 'Кухня-гостиная',
-  unknown:     'Неизвестно',
+  kitchen:           'Кухня',
+  bedroom:           'Спальня',
+  living:            'Гостиная',
+  bathroom:          'Ванная',
+  wc:                'Туалет',
+  hallway:           'Прихожая',
+  balcony:           'Балкон',
+  storage:           'Кладовая',
+  studio_zone:       'Кухня-гостиная',
+  unknown:           'Неизвестно',
+  combined_bathroom: 'Совмещённый санузел',
+  corridor:          'Коридор',
+  dressing_room:     'Гардеробная',
+  loggia:            'Лоджия',
+  kitchen_living:    'Кухня-гостиная',
+  kids_room:         'Детская',
+  laundry:           'Постирочная',
+  vestibule:         'Тамбур',
 };
+
+function mapTypeToHint(type: RoomType): GeometryRoom['type_hint'] {
+  switch (type) {
+    case 'combined_bathroom':
+    case 'laundry':
+      return 'bathroom';
+    case 'corridor':
+      return 'hallway';
+    case 'loggia':
+      return 'balcony';
+    default:
+      return null;
+  }
+}
 
 function geometryRoomToRoomInfo(gr: GeometryRoom): RoomInfo {
   return {
