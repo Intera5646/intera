@@ -170,67 +170,68 @@ export async function POST(req: NextRequest) {
 
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
-// Call 1: identify rooms, types, dimensions only — compact output, no wall detail
-const PROMPT_ROOMS_ONLY = `This is a Russian apartment floor plan (план БТИ). It WILL have between 3 and 8 enclosed rooms. Count every space bounded by walls.
+// Step 1 user prompt: image → free-text description (NO JSON requested)
+const STEP1_PROMPT = `Analyze this floor plan thoroughly.
 
-STEP 1 — COUNT: Trace every polygon formed by wall lines. Count each enclosed space separately.
-STEP 2 — IDENTIFY: Determine room type from geometry and symbols:
-  - Largest space with exterior windows → living or bedroom
-  - Space with sink/stove symbol → kitchen
-  - Space with bathtub symbol → bathroom
-  - Small space (~2-4 m²) near bathroom → wc
-  - Narrow connecting space → hallway
-  - Slab attached to exterior wall, no walls on one side → balcony
-STEP 3 — MEASURE: Use dimension lines for width and length. If no scale, estimate from door widths (~0.9 m).
+For every enclosed space clearly bounded by walls:
+- Read the exact dimension numbers printed on the drawing (in mm)
+- Describe its location: left side / right side / center / top / bottom
+- List any visible fixtures: toilet symbol, bathtub, sink basin, stove burners, door swing arcs
+- Note window openings with their printed width in mm
+- Note door openings with their printed width in mm
+- Note wall thickness: thick hatched lines = external/load-bearing, thin single lines = partition walls
 
-Return ONLY valid JSON, no markdown, no explanation:
+Important rules:
+- Read numbers ONLY from what is printed on the drawing
+- Do NOT invent spaces — only describe areas with clear wall boundaries on all sides
+- Do NOT name room types (no 'bedroom', 'kitchen')
+- If two areas have no wall between them, describe them as one space
+- Be precise about how many distinct enclosed spaces you count`;
+
+// Step 2 user prompt: analysisText (NO image) → structured JSON
+function buildStep2Prompt(analysisText: string): string {
+  return `Based on this floor plan analysis, extract structured data.
+
+ANALYSIS:
+${analysisText}
+
+Return ONLY this JSON structure:
 {
-  "total_area_m2": 52,
-  "ceiling_height_m": 2.7,
-  "orientation": "south",
-  "rooms": [
-    { "id": "R1", "name": "Гостиная", "type": "living", "width_m": 3.8, "length_m": 5.2, "size_category": "large", "type_hint": null },
-    { "id": "R2", "name": "Спальня", "type": "bedroom", "width_m": 3.0, "length_m": 4.0, "size_category": "medium", "type_hint": null }
-  ]
-}
-
-Valid types: kitchen, bedroom, living, bathroom, wc, hallway, balcony, storage, studio_zone
-Valid size_category: small (<10 m²), medium (10-20 m²), large (>20 m²)
-Valid orientation: north, south, east, west, unknown
-
-CRITICAL: Count EVERY enclosed space independently. A typical Russian apartment has 4-8 rooms: living room, 1-3 bedrooms, kitchen, hallway, bathroom, WC, and possibly balcony/storage. If you detect only 1-2 rooms, you have made an error — re-examine the plan carefully, trace every set of walls that forms a closed polygon, and list each one separately.
-
-IMPORTANT: A typical Russian apartment has 4-8 rooms. If you see only 1-2, recount carefully.
-
-Additionally, look for clear visual symbols that strongly suggest a specific room function, independent of size or position: a bathtub/shower symbol → set type_hint to "bathroom"; a stove/oven symbol → set type_hint to "kitchen"; a very narrow corridor connecting rooms → set type_hint to "hallway"; a slab attached to the exterior wall with no enclosed ceiling → set type_hint to "balcony". Only set type_hint when the symbol is unambiguous. Otherwise set type_hint to null. This is a visual hint only — it does not override the type field.`;
-
-function buildWallDetailsPrompt(rooms: Array<{ id: string; name: string; width_m: number; length_m: number }>): string {
-  const roomList = rooms.map(r => `  - ${r.id}: ${r.name} (${r.width_m}m × ${r.length_m}m)`).join('\n');
-  return `Look at this Russian apartment floor plan again. You previously identified these rooms:
-${roomList}
-
-For EACH room, extract wall details. Number walls W1 (back/window wall), W2 (right), W3 (front/entrance side), W4 (left) clockwise. Note any doors (~0.9 m wide) or windows (~1.2-1.8 m wide) along each wall, and suggest 1-2 camera positions.
-
-Return ONLY valid JSON, no markdown:
-{
+  "total_spaces": <number of distinct spaces found>,
   "rooms": [
     {
-      "id": "R1",
-      "walls": [
-        { "id": "W1", "length_m": 5.2, "features": [{ "type": "window", "position_from_start_m": 1.5, "width_m": 1.6 }] },
-        { "id": "W2", "length_m": 3.8, "features": [] },
-        { "id": "W3", "length_m": 5.2, "features": [{ "type": "door", "position_from_start_m": 0.3, "width_m": 0.9, "leads_to_room_id": "R4" }] },
-        { "id": "W4", "length_m": 3.8, "features": [] }
-      ],
-      "suggested_cameras": [
-        { "camera_at_wall_id": "W3", "facing_wall_id": "W1", "description": "Wide shot facing window wall" }
+      "id": "room_1",
+      "label": "Помещение 1",
+      "type": "unknown",
+      "type_hint": <see rules below>,
+      "dimensions": {
+        "width_m": <from analysis, in meters>,
+        "length_m": <from analysis, in meters>,
+        "height_m": null
+      },
+      "openings": [
+        { "kind": "door", "width_mm": <number> },
+        { "kind": "window", "width_mm": <number> }
       ]
     }
   ]
-}`;
 }
 
-// USER_PROMPT used by Groq fallback (single-call, same schema as before)
+type_hint rules — set ONLY when analysis explicitly mentions:
+- toilet symbol or bathtub → "bathroom"
+- stove burners or kitchen sink → "kitchen"
+- very narrow space under 1.0m wide → "hallway"
+- the word balcony or явный выступ за периметр здания → "balcony"
+- all other cases → null
+
+Strict rules:
+- type is ALWAYS "unknown" — never change this
+- Do NOT add rooms not described in the analysis
+- Do NOT invent dimensions — use only numbers from the analysis text
+- label is always "Помещение N" — never a room type name`;
+}
+
+// USER_PROMPT used by Kimi single-call fallback
 const USER_PROMPT = `This is a Russian apartment floor plan (план БТИ). It WILL have between 3 and 8 enclosed rooms.
 
 STEP 1 — COUNT: Trace every polygon formed by wall lines. Count each enclosed space.
@@ -546,67 +547,61 @@ function parseAnalysisResponse(content: string): AnalysisResult | null {
   }
 }
 
-// ── OpenRouter two-call helpers ───────────────────────────────────────────────
+// ── Step 2 response parser ────────────────────────────────────────────────────
 
-interface RoomsOnlyData {
-  total_area_m2: number;
-  ceiling_height_m: number;
-  orientation: string;
-  rooms: Array<{ id: string; name: string; type: string; width_m: number; length_m: number; size_category: string; type_hint: 'bathroom' | 'kitchen' | 'hallway' | 'balcony' | null }>;
+interface Step2Room {
+  id: string;
+  label: string;
+  type_hint: 'bathroom' | 'kitchen' | 'hallway' | 'balcony' | null;
+  width_m: number;
+  length_m: number;
 }
 
-function parseRoomsOnlyResponse(content: string): RoomsOnlyData | null {
-  console.log(`[analyze:call1:parse] ${content.length} chars | first 400: ${content.slice(0, 400)}`);
+interface Step2Data {
+  total_spaces: number;
+  rooms: Step2Room[];
+}
+
+function parseStep2Response(rawJson: string): Step2Data | null {
+  console.log(`[analyze:step2:parse] ${rawJson.length} chars | first 400: ${rawJson.slice(0, 400)}`);
   try {
-    const parsed = JSON.parse(extractJsonBlock(content)) as Record<string, unknown>;
+    const parsed = JSON.parse(extractJsonBlock(rawJson)) as Record<string, unknown>;
     if (!Array.isArray(parsed.rooms) || (parsed.rooms as unknown[]).length === 0) {
-      console.warn('[analyze:call1:parse] No rooms array:', JSON.stringify(parsed).slice(0, 200));
+      console.warn('[analyze:step2:parse] No rooms array:', JSON.stringify(parsed).slice(0, 200));
       return null;
     }
-    const VALID_TYPE_HINTS = new Set(['bathroom', 'kitchen', 'hallway', 'balcony']);
     const rooms = (parsed.rooms as unknown[]).map((r: unknown, idx) => {
       const room = (r ?? {}) as Record<string, unknown>;
-      const dimsRaw = (room.dimensions ?? {}) as Record<string, unknown>;
+      const dims = (room.dimensions ?? {}) as Record<string, unknown>;
       const rawHint = String(room.type_hint ?? '').toLowerCase().trim();
+      const VALID_HINTS = new Set(['bathroom', 'kitchen', 'hallway', 'balcony']);
+
+      // Dimensions may arrive in mm if the model didn't convert — normalise to metres
+      const rawW = Number(dims.width_m ?? 0);
+      const rawL = Number(dims.length_m ?? 0);
+      const width_m  = rawW  > 20 ? rawW  / 1000 : rawW;
+      const length_m = rawL  > 20 ? rawL  / 1000 : rawL;
+
       return {
-        id:            String(room.id   ?? `R${idx + 1}`),
-        name:          String(room.name ?? `Комната ${idx + 1}`),
-        type:          String(room.type ?? 'living'),
-        width_m:       clampDim(room.width_m  ?? dimsRaw.width_m,  0.5, 20),
-        length_m:      clampDim(room.length_m ?? dimsRaw.length_m, 0.5, 20),
-        size_category: String(room.size_category ?? 'medium'),
-        type_hint:     VALID_TYPE_HINTS.has(rawHint) ? (rawHint as 'bathroom' | 'kitchen' | 'hallway' | 'balcony') : null,
+        id:        String(room.id    ?? `room_${idx + 1}`),
+        label:     String(room.label ?? `Помещение ${idx + 1}`),
+        type_hint: VALID_HINTS.has(rawHint) ? (rawHint as 'bathroom' | 'kitchen' | 'hallway' | 'balcony') : null,
+        width_m:   clampDim(width_m,  0.5, 20),
+        length_m:  clampDim(length_m, 0.5, 20),
       };
     });
+
     return {
-      total_area_m2:    clampDim(parsed.total_area_m2,    5,   1000) || 50,
-      ceiling_height_m: clampDim(parsed.ceiling_height_m, 2.0, 5.0) || 2.7,
-      orientation:      String(parsed.orientation ?? 'unknown'),
+      total_spaces: Number(parsed.total_spaces ?? rooms.length),
       rooms,
     };
   } catch (e) {
-    console.warn('[analyze:call1:parse] failed:', e instanceof Error ? e.message : e);
+    console.warn('[analyze:step2:parse] failed:', e instanceof Error ? e.message : e);
     return null;
   }
 }
 
-interface WallDetailsData {
-  rooms: Array<{ id: string; walls?: unknown[]; suggested_cameras?: unknown[] }>;
-}
-
-function parseWallDetailsResponse(content: string): WallDetailsData | null {
-  console.log(`[analyze:call2:parse] ${content.length} chars | first 400: ${content.slice(0, 400)}`);
-  try {
-    const parsed = JSON.parse(extractJsonBlock(content)) as Record<string, unknown>;
-    if (!Array.isArray(parsed.rooms)) return null;
-    return { rooms: parsed.rooms as Array<{ id: string; walls?: unknown[]; suggested_cameras?: unknown[] }> };
-  } catch (e) {
-    console.warn('[analyze:call2:parse] failed:', e instanceof Error ? e.message : e);
-    return null;
-  }
-}
-
-// ── OpenRouter Kimi K2.6 (two sequential calls) ───────────────────────────────
+// ── OpenRouter Kimi K2.6 — two-step: observe → extract ───────────────────────
 
 async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Promise<AnalysisResult | null> {
   const headers = {
@@ -616,115 +611,112 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
     'X-Title': 'INTERA Floor Plan Analyzer',
   };
 
-  // ── Call 1: room identification (compact schema, low token count) ─────────
-  console.log('[analyze:openrouter] Call 1 — room identification...');
+  // ── Step 1: image → free-text description (no JSON) ──────────────────────
+  console.log('[analyze:openrouter] Step 1 — free analysis (image → text)...');
   const res1 = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers,
     body: JSON.stringify({
       model: 'moonshotai/kimi-k2.6',
       reasoning: { enabled: false },
-      messages: [{ role: 'user', content: [
-        { type: 'image_url', image_url: { url: base64DataUrl } },
-        { type: 'text', text: PROMPT_ROOMS_ONLY },
-      ]}],
-      max_tokens: 1024,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are analyzing a Russian architectural floor plan (BTI).\nRead it carefully and describe everything you observe.\nDo NOT output JSON. Write a detailed text description.',
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: base64DataUrl } },
+            { type: 'text', text: STEP1_PROMPT },
+          ],
+        },
+      ],
+      max_tokens: 2048,
       temperature: 0,
     }),
   });
 
   const text1 = await res1.text();
-  console.log(`[analyze:openrouter] Call 1 HTTP ${res1.status} | length: ${text1.length}`);
+  console.log(`[analyze:openrouter] Step 1 HTTP ${res1.status} | length: ${text1.length}`);
   if (!res1.ok) {
-    console.error('[analyze:openrouter] Call 1 error:', text1.slice(0, 400));
-    throw new Error(`OpenRouter Call 1 HTTP ${res1.status}: ${text1.slice(0, 300)}`);
+    console.error('[analyze:openrouter] Step 1 error:', text1.slice(0, 400));
+    throw new Error(`OpenRouter Step 1 HTTP ${res1.status}: ${text1.slice(0, 300)}`);
   }
 
   const data1 = JSON.parse(text1) as { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>; error?: { message?: string } };
-  if (data1.error) throw new Error(`OpenRouter Call 1 API error: ${data1.error.message}`);
+  if (data1.error) throw new Error(`OpenRouter Step 1 API error: ${data1.error.message}`);
 
-  const content1 = data1?.choices?.[0]?.message?.content
+  const analysisText = data1?.choices?.[0]?.message?.content
     || data1?.choices?.[0]?.message?.reasoning_content
     || '';
-  const roomsData = parseRoomsOnlyResponse(content1);
-  if (!roomsData || roomsData.rooms.length === 0) {
-    console.warn('[analyze:openrouter] Call 1 returned no rooms — falling back to Groq');
+  console.log('[analyze:step1:analysis]', analysisText.slice(0, 300));
+
+  if (!analysisText.trim()) {
+    console.warn('[analyze:openrouter] Step 1 returned empty text — falling back');
     return null;
   }
-  console.log(`[analyze:openrouter] Call 1 found ${roomsData.rooms.length} rooms: ${roomsData.rooms.map(r => r.name).join(', ')}`);
 
-  // ── Call 2: wall details for each room ────────────────────────────────────
-  console.log('[analyze:openrouter] Call 2 — wall details...');
-  const wallDetailsMap = new Map<string, { walls?: unknown[]; suggested_cameras?: unknown[] }>();
+  // ── Step 2: analysisText (no image) → structured JSON ────────────────────
+  console.log('[analyze:openrouter] Step 2 — structured extraction (text → JSON)...');
+  const res2 = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model: 'moonshotai/kimi-k2.6',
+      reasoning: { enabled: false },
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a data extraction assistant.\nConvert architectural analysis text into structured JSON.\nReturn ONLY valid JSON, no explanation, no markdown.',
+        },
+        {
+          role: 'user',
+          content: buildStep2Prompt(analysisText),
+        },
+      ],
+      max_tokens: 2048,
+      temperature: 0,
+    }),
+  });
 
-  try {
-    const res2 = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: 'moonshotai/kimi-k2.6',
-        reasoning: { enabled: false },
-        messages: [{ role: 'user', content: [
-          { type: 'image_url', image_url: { url: base64DataUrl } },
-          { type: 'text', text: buildWallDetailsPrompt(roomsData.rooms) },
-        ]}],
-        max_tokens: 3072,
-        temperature: 0,
-      }),
-    });
-
-    const text2 = await res2.text();
-    console.log(`[analyze:openrouter] Call 2 HTTP ${res2.status} | length: ${text2.length}`);
-
-    if (res2.ok) {
-      const data2 = JSON.parse(text2) as { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>; error?: { message?: string } };
-      const content2 = data2?.choices?.[0]?.message?.content
-        || data2?.choices?.[0]?.message?.reasoning_content
-        || '';
-      const wallDetails = parseWallDetailsResponse(content2);
-      if (wallDetails) {
-        for (const room of wallDetails.rooms) {
-          wallDetailsMap.set(room.id, { walls: room.walls, suggested_cameras: room.suggested_cameras });
-        }
-        console.log(`[analyze:openrouter] Call 2 wall details for ${wallDetailsMap.size} rooms`);
-      }
-    } else {
-      console.warn('[analyze:openrouter] Call 2 failed — using default walls:', text2.slice(0, 200));
-    }
-  } catch (err) {
-    console.warn('[analyze:openrouter] Call 2 threw — using default walls:', err instanceof Error ? err.message : err);
+  const text2 = await res2.text();
+  console.log(`[analyze:openrouter] Step 2 HTTP ${res2.status} | length: ${text2.length}`);
+  if (!res2.ok) {
+    console.error('[analyze:openrouter] Step 2 error:', text2.slice(0, 400));
+    throw new Error(`OpenRouter Step 2 HTTP ${res2.status}: ${text2.slice(0, 300)}`);
   }
 
-  // ── Merge: combine room list from Call 1 + wall details from Call 2 ───────
-  const geometryRooms: GeometryRoom[] = roomsData.rooms.map((r, idx) => {
-    const details = wallDetailsMap.get(r.id) ?? {};
-    const type = toRoomType(r.type);
-    const defaults = DEFAULT_ROOM_DIMENSIONS[type] ?? { width_m: 3.0, length_m: 4.0 };
-    const width_m  = r.width_m  || defaults.width_m;
-    const length_m = r.length_m || defaults.length_m;
-    const height_m = roomsData.ceiling_height_m || 2.7;
-    const size_category = toSizeCategory(r.size_category, width_m, length_m);
+  const data2 = JSON.parse(text2) as { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>; error?: { message?: string } };
+  if (data2.error) throw new Error(`OpenRouter Step 2 API error: ${data2.error.message}`);
+
+  const rawJson = data2?.choices?.[0]?.message?.content
+    || data2?.choices?.[0]?.message?.reasoning_content
+    || '';
+  console.log('[analyze:step2:raw]', rawJson.slice(0, 500));
+
+  const parsedData = parseStep2Response(rawJson);
+  if (!parsedData || parsedData.rooms.length === 0) {
+    console.warn('[analyze:openrouter] Step 2 returned no rooms — falling back');
+    return null;
+  }
+  console.log('[analyze:step2:rooms_found]', parsedData.total_spaces);
+
+  // ── Build GeometryRooms from Step 2 data (walls generated from defaults) ──
+  const geometryRooms: GeometryRoom[] = parsedData.rooms.map((r, idx) => {
+    const type: RoomType = 'unknown';
+    const width_m  = r.width_m  || 3.0;
+    const length_m = r.length_m || 4.0;
+    const height_m = 2.7;
+    const size_category = toSizeCategory(undefined, width_m, length_m);
     const num_photos_needed: 1 | 2 = width_m * length_m >= 15 ? 2 : 1;
-    const walls = parseRoomWalls(details.walls, width_m, length_m);
+    const walls = buildDefaultWalls(width_m, length_m);
+    const suggested_cameras = buildDefaultCameras(type, num_photos_needed);
 
-    let suggested_cameras: CameraSuggestion[];
-    if (Array.isArray(details.suggested_cameras) && details.suggested_cameras.length > 0) {
-      suggested_cameras = (details.suggested_cameras as unknown[]).slice(0, 2).map((c: unknown) => {
-        const cam = (c ?? {}) as Record<string, unknown>;
-        return {
-          camera_at_wall_id: String(cam.camera_at_wall_id ?? 'W3'),
-          facing_wall_id:    String(cam.facing_wall_id    ?? 'W1'),
-          description:       String(cam.description       ?? ''),
-        };
-      });
-    } else {
-      suggested_cameras = buildDefaultCameras(type, num_photos_needed);
-    }
-
-    void idx; // used implicitly via r.id
+    void idx;
     return {
       id:   r.id,
-      name: r.name,
+      name: r.label,
       type,
       type_hint: r.type_hint,
       dimensions: { width_m, length_m, height_m },
@@ -735,26 +727,28 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
     };
   });
 
+  const totalArea = geometryRooms.reduce(
+    (sum, r) => sum + r.dimensions.width_m * r.dimensions.length_m, 0
+  );
   const geometry: ApartmentGeometry = {
     is_bti_plan: true,
     apartment: {
-      total_area_m2:    roomsData.total_area_m2,
-      ceiling_height_m: roomsData.ceiling_height_m,
-      orientation: (['north','south','east','west'].includes(roomsData.orientation)
-        ? roomsData.orientation : 'unknown') as ApartmentGeometry['apartment']['orientation'],
+      total_area_m2:    Math.round(totalArea * 10) / 10,
+      ceiling_height_m: 2.7,
+      orientation:      'unknown',
     },
     rooms: geometryRooms,
   };
 
   const rooms: RoomInfo[] = geometryRooms.map(geometryRoomToRoomInfo);
-  console.log(`[analyze:openrouter] MERGED — ${geometryRooms.length} rooms | wallsFromCall2: ${wallDetailsMap.size}`);
+  console.log(`[analyze:openrouter] DONE — ${geometryRooms.length} rooms`);
 
   return {
     roomCount: geometryRooms.length,
     rooms,
     room_names: geometryRooms.map(r => r.name),
     geometry_json: geometry,
-    debug_raw_response: content1.slice(0, 500),
+    debug_raw_response: analysisText.slice(0, 500),
   };
 }
 
