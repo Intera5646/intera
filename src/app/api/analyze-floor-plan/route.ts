@@ -663,7 +663,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
           ],
         },
       ],
-      max_tokens: 2048,
+      max_tokens: 4096,
       temperature: 0,
     }),
   });
