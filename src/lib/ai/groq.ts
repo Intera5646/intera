@@ -49,8 +49,21 @@ async function callKimi(params: {
     (typeof msg?.content === 'string' && msg.content.length > 0 ? msg.content : '')
     || msg?.reasoning_content
     || '{}';
-  // Strip markdown code fences if model wraps the JSON response
-  const result = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim() || '{}';
+  // Extract JSON by finding first { or [ and last } or ]
+  const firstObj = raw.indexOf('{');
+  const firstArr = raw.indexOf('[');
+  const lastObj  = raw.lastIndexOf('}');
+  const lastArr  = raw.lastIndexOf(']');
+
+  const start = (firstObj === -1) ? firstArr
+    : (firstArr === -1) ? firstObj
+    : Math.min(firstObj, firstArr);
+  const end = Math.max(lastObj, lastArr);
+
+  const result = (start !== -1 && end !== -1 && end > start)
+    ? raw.slice(start, end + 1)
+    : raw;
+
   console.log(`[callKimi${label ? ':' + label : ''}]`, result.slice(0, 200));
   return result;
 }
