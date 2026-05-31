@@ -766,6 +766,17 @@ interface CameraMetaEntry {
   depth_map_url: string;
 }
 
+async function processInBatches<T>(
+  items: T[],
+  batchSize: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    await Promise.allSettled(batch.map(fn));
+  }
+}
+
 async function runBtiPipelineV2(ctx: {
   params: RunGenerationParams;
   geometry: ApartmentGeometry;
@@ -781,31 +792,21 @@ async function runBtiPipelineV2(ctx: {
       if (error) console.warn('[BTI-v2] geometry cache write failed (non-fatal):', error.message);
     });
 
-  console.log(`[BTI-v2] Processing ${geometry.rooms.length} rooms in parallel — 1 camera, 1 render each`);
-
-  const roomResults = await Promise.allSettled(
-    geometry.rooms.map(async (room, index) => {
-      // FIX 5: log each room so failures are traceable
-      console.log(`[BTI-v2] Queuing room ${index + 1}/${geometry.rooms.length}: "${room.name}" (${room.type})`);
-      if (index > 0) await new Promise(r => setTimeout(r, index * 1000));
-      return runBtiRoomV2({ room, params });
-    })
-  );
+  console.log(`[BTI-v2] Processing ${geometry.rooms.length} rooms in parallel batches of 3`);
 
   const allRenderUrls: string[] = [];
   const cameraMetas: CameraMetaEntry[] = [];
 
-  for (let i = 0; i < roomResults.length; i++) {
-    const result = roomResults[i];
-    const room = geometry.rooms[i];
-    if (result.status === 'fulfilled') {
-      allRenderUrls.push(...result.value.renderUrls);
-      cameraMetas.push(result.value.cameraMeta);
-    } else {
-      const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      console.error(`[BTI-v2] Room "${room?.name ?? i}" (${room?.type ?? '?'}) FAILED: ${msg}`);
+  await processInBatches(geometry.rooms, 3, async (room) => {
+    try {
+      const result = await runBtiRoomV2({ room, params });
+      allRenderUrls.push(...result.renderUrls);
+      cameraMetas.push(result.cameraMeta);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[BTI-v2] Room "${room.name}" (${room.type}) FAILED: ${msg}`);
     }
-  }
+  });
 
   const processingTime = Math.round((Date.now() - startTime) / 1000);
   const succeeded = allRenderUrls.length > 0;
