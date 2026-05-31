@@ -89,10 +89,16 @@ export async function POST(req: NextRequest) {
       }),
     });
 
-    const data = await res.json() as {
-      choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
-      error?: { message: string };
-    };
+    // Read as text first — OpenRouter may return a plain-text error body
+    // (e.g. "Host not in allowlist") which makes res.json() throw.
+    const bodyText = await res.text();
+    let data: { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>; error?: { message: string } };
+    try {
+      data = JSON.parse(bodyText) as typeof data;
+    } catch {
+      console.warn('[furniture-plan] Non-JSON response from OpenRouter for', room.name, ':', bodyText.slice(0, 200));
+      return NextResponse.json({ furniture: [] });
+    }
 
     // Kimi K2.6 may return its output in reasoning_content with content empty
     const raw = data.choices?.[0]?.message?.content

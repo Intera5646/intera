@@ -33,10 +33,16 @@ async function callKimi(params: {
     },
     body: JSON.stringify({ model: 'moonshotai/kimi-k2.6', reasoning: { enabled: false }, ...apiParams }),
   });
-  const data = await res.json() as {
-    choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
-    error?: { message: string };
-  };
+  // Read body as text first — the API may return a plain-text error (e.g.
+  // "Host not in allowlist") instead of JSON when the key has origin
+  // restrictions, which makes res.json() throw a SyntaxError.
+  const bodyText = await res.text();
+  let data: { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>; error?: { message: string } };
+  try {
+    data = JSON.parse(bodyText) as typeof data;
+  } catch {
+    throw new Error(`OpenRouter HTTP ${res.status}: ${bodyText.slice(0, 200)}`);
+  }
   if (!res.ok || data.error) throw new Error(data.error?.message ?? `OpenRouter HTTP ${res.status}`);
   const msg = data.choices?.[0]?.message;
   const raw =
