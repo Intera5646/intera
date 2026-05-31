@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://intera.vercel.app',
+        'X-Title': 'INTERA',
       },
       body: JSON.stringify({
         model: 'moonshotai/kimi-k2.6',

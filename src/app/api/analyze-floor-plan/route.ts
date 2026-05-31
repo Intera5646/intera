@@ -639,8 +639,7 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
   const headers = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${apiKey}`,
-    'HTTP-Referer': 'https://intera.vercel.app',
-    'X-Title': 'INTERA Floor Plan Analyzer',
+    'X-Title': 'INTERA',
   };
 
   // ── Step 1: image → free-text description (no JSON) ──────────────────────

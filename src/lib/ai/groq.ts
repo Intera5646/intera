@@ -29,7 +29,7 @@ async function callKimi(params: {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
-      'HTTP-Referer': 'https://intera.vercel.app',
+      'X-Title': 'INTERA',
     },
     body: JSON.stringify({ model: 'moonshotai/kimi-k2.6', reasoning: { enabled: false }, ...apiParams }),
   });
