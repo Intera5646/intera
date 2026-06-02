@@ -255,7 +255,7 @@ export type SdxlMultiControlnetParams = {
 
 export async function generateSdxlMultiControlnet(
   params: SdxlMultiControlnetParams,
-): Promise<string[]> {
+): Promise<string> {
   const client = getClient();
 
   const numOutputs       = params.numOutputs        ?? 1;
@@ -282,20 +282,23 @@ export async function generateSdxlMultiControlnet(
   };
 
   console.log(
-    '[sdxl-multi-controlnet] Calling', SDXL_MULTI_CONTROLNET_MODEL,
-    '| outputs:', numOutputs,
+    '[sdxl-multi-controlnet] Creating prediction (async) |',
+    'outputs:', numOutputs,
     '| depth_scale:', depthScale,
     '| lineart_scale:', lineartScale,
     '| depth:', params.depthMapUrl.slice(0, 70),
     '| lineart:', params.lineartUrl.slice(0, 70),
   );
 
-  let output: unknown;
+  let prediction: { id: string };
   try {
-    output = await client.run(SDXL_MULTI_CONTROLNET_MODEL, { input });
+    prediction = await client.predictions.create({
+      version: SDXL_MULTI_CONTROLNET_VERSION,
+      input,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[sdxl-multi-controlnet] Replicate call FAILED:', msg);
+    console.error('[sdxl-multi-controlnet] predictions.create FAILED:', msg);
     console.error('[sdxl-multi-controlnet] Input sent:', JSON.stringify(input, null, 2));
     if (err && typeof err === 'object') {
       const e = err as Record<string, unknown>;
@@ -305,16 +308,35 @@ export async function generateSdxlMultiControlnet(
     throw new Error(`generateSdxlMultiControlnet: ${msg}`);
   }
 
-  if (!output) throw new Error('generateSdxlMultiControlnet: Replicate returned no output');
+  console.log('[sdxl-multi-controlnet] Prediction created, id:', prediction.id);
+  return prediction.id;
+}
 
-  const urls = extractUrls(output);
-  if (urls.length === 0) {
-    console.error('[sdxl-multi-controlnet] empty URL list, raw output:', JSON.stringify(output).slice(0, 500));
-    throw new Error('generateSdxlMultiControlnet: no output URLs in response');
-  }
+// ── Prediction polling helper ─────────────────────────────────────────────────
+// Used by the status endpoint to resolve pending SDXL predictions without
+// blocking the original /api/generate function.
 
-  console.log('[sdxl-multi-controlnet] Done —', urls.length, 'render(s):', urls[0].slice(0, 70));
-  return urls;
+export type ReplicatePredictionStatus =
+  | 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled';
+
+export type PredictionResult = {
+  id: string;
+  status: ReplicatePredictionStatus;
+  urls: string[];     // populated only when status === 'succeeded'
+  error: string | null;
+};
+
+export async function getPrediction(predictionId: string): Promise<PredictionResult> {
+  const client = getClient();
+  const pred = await client.predictions.get(predictionId);
+  const status = pred.status as ReplicatePredictionStatus;
+  const urls = status === 'succeeded' ? extractUrls(pred.output) : [];
+  return {
+    id:     pred.id,
+    status,
+    urls,
+    error:  typeof pred.error === 'string' ? pred.error : pred.error ? String(pred.error) : null,
+  };
 }
 
 // ── Flux Depth Pro (v2 BTI pipeline) ─────────────────────────────────────────

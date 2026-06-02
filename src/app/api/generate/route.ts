@@ -754,18 +754,16 @@ async function runPhotoPipeline(ctx: {
 
 // ── BTI v2 pipeline: procedural depth map → Flux Depth Pro ───────────────────
 
-// FIX 3: named constant for Flux Depth Pro control strength
-const CONTROL_STRENGTH = 0.6;
-
 interface CameraMetaEntry {
   camera_index: number;
   camera_at_wall_id: string;
   facing_wall_id: string;
   description: string;
   room_id: string;
-  room_name: string;       // FIX 7: display room label in UI
+  room_name: string;
   room_dimensions: string; // e.g. "5.6м × 5.2м" — shown as overlay label
   depth_map_url: string;
+  prediction_id?: string;  // Replicate prediction ID when using async SDXL pipeline
 }
 
 async function processInBatches<T>(
@@ -796,60 +794,63 @@ async function runBtiPipelineV2(ctx: {
 
   console.log(`[BTI-v2] Processing ${geometry.rooms.length} rooms in parallel batches of 3`);
 
-  const allRenderUrls: string[] = [];
   const cameraMetas: CameraMetaEntry[] = [];
+  let synchronouslyFailedCount = 0;
 
-  await processInBatches(geometry.rooms, 3, async (room) => {
+  const roomsWithIndex = geometry.rooms.map((room, idx) => ({ room, idx }));
+  await processInBatches(roomsWithIndex, 3, async ({ room, idx }) => {
     try {
-      const result = await runBtiRoomV2({ room, params });
-      allRenderUrls.push(...result.renderUrls);
+      const result = await runBtiRoomV2({ room, roomIndex: idx, params });
       cameraMetas.push(result.cameraMeta);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[BTI-v2] Room "${room.name}" (${room.type}) FAILED: ${msg}`);
+      synchronouslyFailedCount++;
     }
   });
 
+  // Rooms with a predictionId are in-flight; rooms where runBtiRoomV2 threw are truly failed.
+  const pendingPredictions = cameraMetas.filter(m => m.prediction_id).length;
   const processingTime = Math.round((Date.now() - startTime) / 1000);
-  const succeeded = allRenderUrls.length > 0;
 
-  if (!succeeded && !params.isAdmin) {
-    await refundTokens(params.session.userId, params.roomCount, params.projectId);
+  // Refund only for rooms that failed before a prediction was even created.
+  if (!params.isAdmin && synchronouslyFailedCount > 0) {
+    await refundTokens(params.session.userId, synchronouslyFailedCount, params.projectId);
   }
 
-  // One Groq call for the whole apartment design report (non-fatal)
+  const allRoomsFailedImmediately = pendingPredictions === 0 && cameraMetas.length === 0;
+
+  // Groq report — generate regardless of render status (doesn't depend on images).
   let designerText: DesignerText | null = null;
   let reportText: string | null = null;
-  if (succeeded) {
-    try {
-      const report = await buildApartmentReport({
-        geometry,
-        style: params.style,
-        budget: params.budget,
-        wishes: params.wishes || undefined,
-      });
-      designerText = report.designerText;
-      reportText = report.reportText;
-      console.log('[BTI-v2] Apartment design report generated');
-    } catch (err) {
-      console.warn('[BTI-v2] Design report failed (non-fatal):', err instanceof Error ? err.message : err);
-    }
+  try {
+    const report = await buildApartmentReport({
+      geometry,
+      style: params.style,
+      budget: params.budget,
+      wishes: params.wishes || undefined,
+    });
+    designerText = report.designerText;
+    reportText = report.reportText;
+    console.log('[BTI-v2] Apartment design report generated');
+  } catch (err) {
+    console.warn('[BTI-v2] Design report failed (non-fatal):', err instanceof Error ? err.message : err);
   }
 
   try {
     await supabaseServer.from('generations').update({
-      status:          succeeded ? 'done' : 'failed',
-      render_urls:     allRenderUrls,
-      image_urls:      allRenderUrls,
+      // 'processing' = predictions are in-flight; status endpoint resolves them.
+      // 'failed'     = every room failed before a prediction could be created.
+      status:          allRoomsFailedImmediately ? 'failed' : 'processing',
       camera_metadata: cameraMetas,
       depth_map_url:   cameraMetas[0]?.depth_map_url ?? null,
       processing_time: processingTime,
       ...(designerText ? { designer_text: designerText, report_text: reportText } : {}),
-      ...(succeeded ? {} : { error_message: 'SDXL multi-controlnet returned no renders' }),
+      ...(allRoomsFailedImmediately ? { error_message: 'All rooms failed before prediction creation' } : {}),
     }).eq('id', params.generationId);
 
     await supabaseServer.from('projects').update({
-      status: succeeded ? 'done' : 'error',
+      status: allRoomsFailedImmediately ? 'error' : 'processing',
     }).eq('id', params.projectId);
   } catch (writeErr) {
     console.error('[BTI-v2] Failed to write final status (refunds already done):', writeErr);
@@ -858,9 +859,10 @@ async function runBtiPipelineV2(ctx: {
 
 async function runBtiRoomV2(opts: {
   room: GeometryRoom;
+  roomIndex: number;
   params: RunGenerationParams;
 }): Promise<{ renderUrls: string[]; cameraMeta: CameraMetaEntry }> {
-  const { room, params } = opts;
+  const { room, roomIndex, params } = opts;
   const roomPref = params.roomPrefs.find((p) => p.roomId === room.id) ?? null;
   const camIdx = 0;
 
@@ -924,9 +926,9 @@ async function runBtiRoomV2(opts: {
     furniture,
   });
 
-  // Step E: SDXL multi-controlnet with depth + lineart conditioning
-  console.log(`[BTI-v2:${room.name}] Calling SDXL multi-controlnet (depth + lineart)`);
-  const renderUrls = await generateSdxlMultiControlnet({
+  // Step E: fire SDXL prediction asynchronously — returns prediction ID immediately
+  console.log(`[BTI-v2:${room.name}] Creating SDXL prediction (async)`);
+  const predictionId = await generateSdxlMultiControlnet({
     depthMapUrl: controlMaps.depthMapUrl,
     lineartUrl:  controlMaps.lineartUrl,
     prompt,
@@ -936,13 +938,28 @@ async function runBtiRoomV2(opts: {
     depthScale:   0.8,
     lineartScale: 0.6,
   });
-  console.log(`[BTI-v2:${room.name}] ${renderUrls.length} render(s) returned`);
+  console.log(`[BTI-v2:${room.name}] Prediction queued, id: ${predictionId}`);
+
+  // Step F: write per-room generation row so the status endpoint can poll it
+  const { error: rowErr } = await supabaseServer.from('generations').insert({
+    project_id:                params.projectId,
+    status:                    'pending_render',
+    room_name:                 room.name,
+    room_index:                roomIndex,
+    depth_map_url:             controlMaps.depthMapUrl,
+    sd_prompt:                 prompt,
+    replicate_prediction_id:   predictionId,
+    created_at:                new Date().toISOString(),
+  });
+  if (rowErr) {
+    // Non-fatal: prediction is still running; log and continue
+    console.warn(`[BTI-v2:${room.name}] Failed to create child generation row (non-fatal):`, rowErr.message);
+  }
 
   const cam = sanitizedRoom.suggested_cameras[camIdx];
-  // Label uses the ORIGINAL room dimensions (not the clamped values)
   const roomDimensions = `${room.dimensions.width_m.toFixed(1)}м × ${room.dimensions.length_m.toFixed(1)}м`;
   return {
-    renderUrls,
+    renderUrls: [], // populated later by status polling
     cameraMeta: {
       camera_index:      camIdx,
       camera_at_wall_id: cam?.camera_at_wall_id ?? 'W3',
@@ -952,6 +969,7 @@ async function runBtiRoomV2(opts: {
       room_name:         room.name,
       room_dimensions:   roomDimensions,
       depth_map_url:     controlMaps.depthMapUrl,
+      prediction_id:     predictionId,
     },
   };
 }
