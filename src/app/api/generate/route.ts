@@ -8,6 +8,7 @@ import {
   generateDepthMap,
   generateWithDepthControlNet,
   generateFluxDepthPro,
+  generateSdxlMultiControlnet,
 } from '../../../lib/ai/adapter';
 import {
   buildDesignBrief,
@@ -22,7 +23,8 @@ import {
   type RoomInfo,
   type RoomPrompt,
 } from '../../../lib/ai/groq';
-import { generateSemanticRenderBuffer } from '../../../lib/geometry/depthMap';
+import { generateDepthBuffer, generateLineartBuffer } from '../../../lib/geometry/depthMap';
+import { uploadControlMaps } from '../../../lib/geometry/uploadControlMaps';
 import type { ApartmentGeometry, GeometryRoom, GeneralPreferences, RoomPreference } from '../../../lib/geometry/types';
 import { STYLE_PROMPTS, ROOM_PROMPTS, BUDGET_PROMPTS } from '../../../lib/data/zones_index';
 
@@ -843,7 +845,7 @@ async function runBtiPipelineV2(ctx: {
       depth_map_url:   cameraMetas[0]?.depth_map_url ?? null,
       processing_time: processingTime,
       ...(designerText ? { designer_text: designerText, report_text: reportText } : {}),
-      ...(succeeded ? {} : { error_message: 'Flux Depth Pro returned no renders' }),
+      ...(succeeded ? {} : { error_message: 'SDXL multi-controlnet returned no renders' }),
     }).eq('id', params.generationId);
 
     await supabaseServer.from('projects').update({
@@ -885,22 +887,26 @@ async function runBtiRoomV2(opts: {
   const area = sanitizedRoom.dimensions.width_m * sanitizedRoom.dimensions.length_m;
   const fovDeg = area < 4 ? 80 : undefined;
 
-  // Step B: generate colored semantic 3D block render with furniture
-  console.log(`[BTI-v2:${room.name}] Generating semantic render (${furniture.length} furniture objects${fovDeg ? ', FOV=' + fovDeg : ''})`);
-  const controlPng = await generateSemanticRenderBuffer(sanitizedRoom, { width: 768, height: 768, cameraIndex: camIdx, furniture, fovDeg });
+  // Step B: generate depth + lineart control maps in parallel
+  const renderOpts = { width: 768, height: 768, cameraIndex: camIdx, furniture, fovDeg };
+  console.log(`[BTI-v2:${room.name}] Generating depth+lineart buffers (${furniture.length} furniture objects${fovDeg ? ', FOV=' + fovDeg : ''})`);
+  const [depthPng, lineartPng] = await Promise.all([
+    generateDepthBuffer(sanitizedRoom, renderOpts),
+    generateLineartBuffer(sanitizedRoom, renderOpts),
+  ]);
 
-  // Step C: upload to depth-maps bucket (now holds the colored control image)
-  const depthPath = `${params.projectId}/${params.generationId}_${room.id}.png`;
-  const { data: uploadData, error: uploadErr } = await supabaseServer.storage
-    .from('depth-maps')
-    .upload(depthPath, controlPng, { contentType: 'image/png', upsert: true });
-
-  if (uploadErr || !uploadData) {
-    throw new Error(`control image upload failed for ${room.name}: ${uploadErr?.message ?? 'no data'}`);
-  }
-  const { data: urlData } = supabaseServer.storage.from('depth-maps').getPublicUrl(uploadData.path);
-  const controlImageUrl = urlData.publicUrl;
-  console.log(`[BTI-v2:${room.name}] Semantic render →`, controlImageUrl.slice(0, 80));
+  // Step C: upload both control maps to control-maps bucket
+  console.log(`[BTI-v2:${room.name}] Uploading control maps`);
+  const controlMaps = await uploadControlMaps(
+    room.id,
+    depthPng,
+    lineartPng,
+    params.generationId,
+    supabaseServer,
+    camIdx,
+  );
+  console.log(`[BTI-v2:${room.name}] depth →`, controlMaps.depthMapUrl.slice(0, 70));
+  console.log(`[BTI-v2:${room.name}] lineart →`, controlMaps.lineartUrl.slice(0, 70));
 
   // Step D: build wall-aware Groq prompt with frame contract
   const roomWishes = [
@@ -918,16 +924,17 @@ async function runBtiRoomV2(opts: {
     furniture,
   });
 
-  // Step E: call Flux Depth Pro — colored control image needs higher guidance + steps
-  console.log(`[BTI-v2:${room.name}] Calling Flux Depth Pro (controlStrength=${CONTROL_STRENGTH})`);
-  const renderUrls = await generateFluxDepthPro({
-    controlImage: controlImageUrl,
+  // Step E: SDXL multi-controlnet with depth + lineart conditioning
+  console.log(`[BTI-v2:${room.name}] Calling SDXL multi-controlnet (depth + lineart)`);
+  const renderUrls = await generateSdxlMultiControlnet({
+    depthMapUrl: controlMaps.depthMapUrl,
+    lineartUrl:  controlMaps.lineartUrl,
     prompt,
     negativePrompt,
     numOutputs: 1,
-    guidanceScale: 7.5,
-    numInferenceSteps: 35,
-    controlStrength: CONTROL_STRENGTH, // FIX 3
+    numInferenceSteps: 30,
+    depthScale:   0.8,
+    lineartScale: 0.6,
   });
   console.log(`[BTI-v2:${room.name}] ${renderUrls.length} render(s) returned`);
 
@@ -942,9 +949,9 @@ async function runBtiRoomV2(opts: {
       facing_wall_id:    cam?.facing_wall_id    ?? 'W1',
       description:       cam?.description       ?? '',
       room_id:           room.id,
-      room_name:         room.name,      // FIX 7
-      room_dimensions:   roomDimensions, // overlay label
-      depth_map_url:     controlImageUrl,
+      room_name:         room.name,
+      room_dimensions:   roomDimensions,
+      depth_map_url:     controlMaps.depthMapUrl,
     },
   };
 }

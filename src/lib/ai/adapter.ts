@@ -219,6 +219,70 @@ export async function generateDepthMap(imageUrl: string): Promise<string> {
   return urls[0];
 }
 
+// ── SDXL Multi-ControlNet (dual depth+lineart conditioning) ──────────────────
+// Uses fofr/sdxl-multi-controlnet-lora on Replicate.
+// controlnet_1 = depth map (XL Depth model), controlnet_2 = lineart map.
+
+export type SdxlMultiControlnetParams = {
+  /** Public URL of the grayscale depth PNG */
+  depthMapUrl: string;
+  /** Public URL of the white-bg black-edge lineart PNG */
+  lineartUrl: string;
+  prompt: string;
+  negativePrompt?: string;
+  numOutputs?: 1 | 2 | 4;
+  numInferenceSteps?: number;
+  /** ControlNet conditioning scale for depth (default 0.8) */
+  depthScale?: number;
+  /** ControlNet conditioning scale for lineart (default 0.6) */
+  lineartScale?: number;
+};
+
+export async function generateSdxlMultiControlnet(
+  params: SdxlMultiControlnetParams,
+): Promise<string[]> {
+  const client = getClient();
+
+  const numOutputs       = params.numOutputs        ?? 1;
+  const inferenceSteps   = params.numInferenceSteps  ?? 30;
+  const depthScale       = params.depthScale         ?? 0.8;
+  const lineartScale     = params.lineartScale       ?? 0.6;
+
+  console.log(
+    '[sdxl-multi-controlnet] Starting | outputs:', numOutputs,
+    '| depth_scale:', depthScale,
+    '| lineart_scale:', lineartScale,
+    '| depth:', params.depthMapUrl.slice(0, 70),
+  );
+
+  const output = await client.run(
+    'fofr/sdxl-multi-controlnet-lora' as `${string}/${string}`,
+    {
+      input: {
+        prompt:              params.prompt,
+        negative_prompt:     params.negativePrompt ?? 'ugly, bad quality, distorted walls, cartoon, watermark, text, blurry',
+        num_outputs:         numOutputs,
+        num_inference_steps: inferenceSteps,
+        controlnet_1:        'depth',
+        controlnet_1_image:  params.depthMapUrl,
+        controlnet_1_conditioning_scale: depthScale,
+        controlnet_2:        'lineart',
+        controlnet_2_image:  params.lineartUrl,
+        controlnet_2_conditioning_scale: lineartScale,
+        disable_safety_checker: true,
+      },
+    },
+  );
+
+  if (!output) throw new Error('generateSdxlMultiControlnet: Replicate returned no output');
+
+  const urls = extractUrls(output);
+  if (urls.length === 0) throw new Error('generateSdxlMultiControlnet: no output URLs in response');
+
+  console.log('[sdxl-multi-controlnet] Done —', urls.length, 'render(s):', urls[0].slice(0, 70));
+  return urls;
+}
+
 // ── Flux Depth Pro (v2 BTI pipeline) ─────────────────────────────────────────
 // Official Black Forest Labs model — no version SHA, uses the /models/ endpoint.
 // control_image must be a publicly accessible PNG/JPEG URL (e.g. Supabase Storage

@@ -103,6 +103,21 @@ export interface FurnitureItem {
   color: string;
 }
 
+/** URLs for the two ControlNet conditioning images produced per room render. */
+export interface ControlMaps {
+  depthMapUrl: string;   // Supabase public URL — grayscale depth PNG
+  lineartUrl: string;    // Supabase public URL — edge lineart PNG
+  roomId: string;
+  cameraIndex: number;
+}
+
+/** Camera position and target in room-space metres, used for Three.js scenes. */
+export interface CameraView {
+  position: { x: number; y: number; z: number };
+  target:   { x: number; y: number; z: number };
+  fov: number; // degrees, default 75
+}
+
 /** A piece of furniture anchored to a wall, represented as an AABB in room space. */
 export interface FurnitureObject {
   id: string;

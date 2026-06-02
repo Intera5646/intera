@@ -337,3 +337,145 @@ export async function generateSemanticRenderBuffer(
 
 // Backward-compatible alias — earlier pipeline code imports generateDepthMapBuffer.
 export const generateDepthMapBuffer = generateSemanticRenderBuffer;
+
+// ── Shared inner raycaster ─────────────────────────────────────────────────────
+// Returns the nearest intersection distance (t) for a single ray against all
+// room surfaces + furniture. Used by both depth and lineart generators.
+
+function castRay(
+  ox: number, oy: number, oz: number,
+  dx: number, dy: number, dz: number,
+  W: number, L: number, H: number,
+  furnitureBoxes: FurnitureAABB[],
+  fallback: number,
+): number {
+  let minT = fallback;
+  { const t = planeT(oy, dy, 0); if (t < minT) { const hx=ox+dx*t,hz=oz+dz*t; if (hx>=0&&hx<=W&&hz>=0&&hz<=L) minT=t; } }
+  { const t = planeT(oy, dy, H); if (t < minT) { const hx=ox+dx*t,hz=oz+dz*t; if (hx>=0&&hx<=W&&hz>=0&&hz<=L) minT=t; } }
+  { const t = planeT(oz, dz, 0); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H) minT=t; } }
+  { const t = planeT(oz, dz, L); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H) minT=t; } }
+  { const t = planeT(ox, dx, 0); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H) minT=t; } }
+  { const t = planeT(ox, dx, W); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H) minT=t; } }
+  for (const box of furnitureBoxes) {
+    const t = rayIntersectsAABB(ox, oy, oz, dx, dy, dz, box);
+    if (t < minT) minT = t;
+  }
+  return minT;
+}
+
+function makeRayDir(
+  px: number, py: number,
+  imgW: number, imgH: number,
+  aspect: number, tanHalf: number,
+  cam: { fx: number; fy: number; fz: number; rx: number; ry: number; rz: number },
+): [number, number, number] {
+  const ndcX = ((px + 0.5) / imgW * 2 - 1) * aspect * tanHalf;
+  const ndcY = (1 - (py + 0.5) / imgH * 2) * tanHalf;
+  const rdx  = cam.fx + ndcX * cam.rx;
+  const rdy  = cam.fy + ndcY;
+  const rdz  = cam.fz + ndcX * cam.rz;
+  const rlen = Math.sqrt(rdx*rdx + rdy*rdy + rdz*rdz);
+  return [rdx/rlen, rdy/rlen, rdz/rlen];
+}
+
+/**
+ * Pure grayscale depth map: white (255) = nearest surface, black (0) = farthest / sky.
+ * Used as the depth ControlNet conditioning image for SDXL multi-controlnet.
+ */
+export async function generateDepthBuffer(
+  room: GeometryRoom,
+  options?: DepthMapOptions,
+): Promise<Buffer> {
+  const imgW     = options?.width       ?? 768;
+  const imgH     = options?.height      ?? 768;
+  const fovRad   = ((options?.fovDeg ?? 75) * Math.PI) / 180;
+  const camIndex = options?.cameraIndex ?? 0;
+
+  const scene = buildScene(room, camIndex);
+  const { width_m: W, length_m: L, height_m: H, camera: cam } = scene;
+
+  const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
+    .map(f => furnitureToAABB(f, W, L))
+    .filter((b): b is FurnitureAABB => b !== null);
+
+  const maxDist = Math.sqrt(W*W + H*H + L*L) * 1.1;
+  const aspect  = imgW / imgH;
+  const tanHalf = Math.tan(fovRad / 2);
+
+  const rawBuf = Buffer.allocUnsafe(imgW * imgH);
+
+  for (let py = 0; py < imgH; py++) {
+    for (let px = 0; px < imgW; px++) {
+      const [dx, dy, dz] = makeRayDir(px, py, imgW, imgH, aspect, tanHalf, cam);
+      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity);
+      rawBuf[py * imgW + px] =
+        t === Infinity ? 0 : Math.round(255 * Math.max(0, 1 - t / maxDist));
+    }
+  }
+
+  return sharp(rawBuf, { raw: { width: imgW, height: imgH, channels: 1 } })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Edge-detected lineart map: white background, black lines at depth discontinuities.
+ * Uses Sobel on a normalised depth buffer. Used as the lineart ControlNet conditioning
+ * image for SDXL multi-controlnet alongside the grayscale depth map.
+ */
+export async function generateLineartBuffer(
+  room: GeometryRoom,
+  options?: DepthMapOptions,
+): Promise<Buffer> {
+  const imgW     = options?.width       ?? 768;
+  const imgH     = options?.height      ?? 768;
+  const fovRad   = ((options?.fovDeg ?? 75) * Math.PI) / 180;
+  const camIndex = options?.cameraIndex ?? 0;
+
+  const scene = buildScene(room, camIndex);
+  const { width_m: W, length_m: L, height_m: H, camera: cam } = scene;
+
+  const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
+    .map(f => furnitureToAABB(f, W, L))
+    .filter((b): b is FurnitureAABB => b !== null);
+
+  const maxDist = Math.sqrt(W*W + H*H + L*L) * 1.1;
+  const aspect  = imgW / imgH;
+  const tanHalf = Math.tan(fovRad / 2);
+
+  // Pass 1: depth values normalised 0 (near) → 1 (far/sky)
+  const depth = new Float32Array(imgW * imgH);
+  for (let py = 0; py < imgH; py++) {
+    for (let px = 0; px < imgW; px++) {
+      const [dx, dy, dz] = makeRayDir(px, py, imgW, imgH, aspect, tanHalf, cam);
+      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity);
+      depth[py * imgW + px] = t === Infinity ? 1.0 : Math.min(1, t / maxDist);
+    }
+  }
+
+  // Pass 2: Sobel edge detection → black edges on white background
+  const rawBuf = Buffer.allocUnsafe(imgW * imgH);
+  const EDGE_THRESHOLD = 0.08; // Sobel magnitude threshold (0–4 range for unit depth)
+
+  for (let py = 0; py < imgH; py++) {
+    for (let px = 0; px < imgW; px++) {
+      const i = py * imgW + px;
+      if (px === 0 || px === imgW-1 || py === 0 || py === imgH-1) {
+        rawBuf[i] = 255;
+        continue;
+      }
+      const gx =
+        -depth[(py-1)*imgW+(px-1)] + depth[(py-1)*imgW+(px+1)]
+        -2*depth[py*imgW+(px-1)]   + 2*depth[py*imgW+(px+1)]
+        -depth[(py+1)*imgW+(px-1)] + depth[(py+1)*imgW+(px+1)];
+      const gy =
+        -depth[(py-1)*imgW+(px-1)] - 2*depth[(py-1)*imgW+px] - depth[(py-1)*imgW+(px+1)]
+        +depth[(py+1)*imgW+(px-1)] + 2*depth[(py+1)*imgW+px] + depth[(py+1)*imgW+(px+1)];
+      rawBuf[i] = Math.sqrt(gx*gx + gy*gy) > EDGE_THRESHOLD ? 0 : 255;
+    }
+  }
+
+  return sharp(rawBuf, { raw: { width: imgW, height: imgH, channels: 1 } })
+    .png()
+    .toBuffer();
+}
