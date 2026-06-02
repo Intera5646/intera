@@ -1,7 +1,8 @@
 import sharp from 'sharp';
 import { buildScene } from './sceneBuilder';
-import type { GeometryRoom, FurnitureObject } from './types';
+import type { GeometryRoom, FurnitureObject, Point2D } from './types';
 import type { WallOpening } from './sceneBuilder';
+import { getRoomPolygonMm } from './polygon';
 
 export interface DepthMapOptions {
   /** Output width in pixels (default 768) */
@@ -342,20 +343,125 @@ export const generateDepthMapBuffer = generateSemanticRenderBuffer;
 // Returns the nearest intersection distance (t) for a single ray against all
 // room surfaces + furniture. Used by both depth and lineart generators.
 
+/**
+ * A wall segment in the XZ plane (vertical extruded from y=0 to y=H).
+ * (x1,z1) → (x2,z2) in metres.
+ */
+type WallSegment = readonly [number, number, number, number];
+
+/**
+ * Ray-segment intersection in the XZ plane, returns the ray parameter t
+ * at which the ray (origin (ox,oz), direction (dx,dz)) crosses the segment
+ * (x1,z1)→(x2,z2). The y-coordinate at the hit must lie in [0, H] for a
+ * vertical wall hit. Returns Infinity if no valid hit.
+ */
+function segmentRayHit(
+  ox: number, oy: number, oz: number,
+  dx: number, dy: number, dz: number,
+  x1: number, z1: number, x2: number, z2: number,
+  H: number,
+): number {
+  const sx = x2 - x1;
+  const sz = z2 - z1;
+  const det = sx * dz - sz * dx;
+  if (Math.abs(det) < EPS) return Infinity; // ray parallel to wall
+
+  const t = ((x1 - ox) * sz - (z1 - oz) * sx) / -det;
+  if (t < 0.001) return Infinity;
+
+  const u = (dx * (z1 - oz) - dz * (x1 - ox)) / -det;
+  if (u < -1e-6 || u > 1 + 1e-6) return Infinity; // beyond segment endpoints
+
+  const hy = oy + dy * t;
+  if (hy < -1e-6 || hy > H + 1e-6) return Infinity;
+
+  return t;
+}
+
+/**
+ * Build polygon wall segments and outline (in metres) for a room.
+ * Returns null when the room is a rectangle — caller uses the fast axis-aligned path.
+ */
+interface PolygonScene {
+  /** Wall segments (x1,z1,x2,z2) in metres */
+  walls: WallSegment[];
+  /** Outline vertices (x_m, z_m) for point-in-polygon test on floor/ceiling */
+  outlineXZ: Array<{ x: number; z: number }>;
+}
+
+function buildPolygonScene(room: GeometryRoom): PolygonScene | null {
+  if (room.shape?.kind !== 'polygon') return null;
+  const pts: Point2D[] = getRoomPolygonMm(room);
+  if (pts.length < 3) return null;
+
+  // Map polygon's (x_mm, y_mm) into room-space (x_m, z_m).
+  // The polygon's y_mm axis runs from top of bounding box downward,
+  // matching the room's Z axis from 0 (front/W3) → length_m (back/W1).
+  const outlineXZ = pts.map(p => ({ x: p.x_mm / 1000, z: p.y_mm / 1000 }));
+  const walls: WallSegment[] = [];
+  for (let i = 0; i < outlineXZ.length; i++) {
+    const a = outlineXZ[i];
+    const b = outlineXZ[(i + 1) % outlineXZ.length];
+    walls.push([a.x, a.z, b.x, b.z]);
+  }
+  return { walls, outlineXZ };
+}
+
+/** Point-in-polygon test in metres (XZ plane). Ray-casting algorithm. */
+function pointInPolygonXZ(x: number, z: number, outline: Array<{ x: number; z: number }>): boolean {
+  if (outline.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+    const xi = outline[i].x, zi = outline[i].z;
+    const xj = outline[j].x, zj = outline[j].z;
+    const intersects =
+      (zi > z) !== (zj > z) &&
+      x < ((xj - xi) * (z - zi)) / (zj - zi || 1e-9) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
 function castRay(
   ox: number, oy: number, oz: number,
   dx: number, dy: number, dz: number,
   W: number, L: number, H: number,
   furnitureBoxes: FurnitureAABB[],
   fallback: number,
+  polyScene: PolygonScene | null = null,
 ): number {
   let minT = fallback;
-  { const t = planeT(oy, dy, 0); if (t < minT) { const hx=ox+dx*t,hz=oz+dz*t; if (hx>=0&&hx<=W&&hz>=0&&hz<=L) minT=t; } }
-  { const t = planeT(oy, dy, H); if (t < minT) { const hx=ox+dx*t,hz=oz+dz*t; if (hx>=0&&hx<=W&&hz>=0&&hz<=L) minT=t; } }
-  { const t = planeT(oz, dz, 0); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H) minT=t; } }
-  { const t = planeT(oz, dz, L); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H) minT=t; } }
-  { const t = planeT(ox, dx, 0); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H) minT=t; } }
-  { const t = planeT(ox, dx, W); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H) minT=t; } }
+
+  if (polyScene) {
+    // Polygon path: N wall segments + floor/ceiling clipped to polygon outline.
+    for (const [x1, z1, x2, z2] of polyScene.walls) {
+      const t = segmentRayHit(ox, oy, oz, dx, dy, dz, x1, z1, x2, z2, H);
+      if (t < minT) minT = t;
+    }
+    {
+      const t = planeT(oy, dy, 0);
+      if (t < minT) {
+        const hx = ox + dx * t, hz = oz + dz * t;
+        if (pointInPolygonXZ(hx, hz, polyScene.outlineXZ)) minT = t;
+      }
+    }
+    {
+      const t = planeT(oy, dy, H);
+      if (t < minT) {
+        const hx = ox + dx * t, hz = oz + dz * t;
+        if (pointInPolygonXZ(hx, hz, polyScene.outlineXZ)) minT = t;
+      }
+    }
+  } else {
+    // Rectangle path: original axis-aligned plane intersections.
+    { const t = planeT(oy, dy, 0); if (t < minT) { const hx=ox+dx*t,hz=oz+dz*t; if (hx>=0&&hx<=W&&hz>=0&&hz<=L) minT=t; } }
+    { const t = planeT(oy, dy, H); if (t < minT) { const hx=ox+dx*t,hz=oz+dz*t; if (hx>=0&&hx<=W&&hz>=0&&hz<=L) minT=t; } }
+    { const t = planeT(oz, dz, 0); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H) minT=t; } }
+    { const t = planeT(oz, dz, L); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H) minT=t; } }
+    { const t = planeT(ox, dx, 0); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H) minT=t; } }
+    { const t = planeT(ox, dx, W); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H) minT=t; } }
+  }
+
   for (const box of furnitureBoxes) {
     const t = rayIntersectsAABB(ox, oy, oz, dx, dy, dz, box);
     if (t < minT) minT = t;
@@ -393,6 +499,7 @@ export async function generateDepthBuffer(
 
   const scene = buildScene(room, camIndex);
   const { width_m: W, length_m: L, height_m: H, camera: cam } = scene;
+  const polyScene = buildPolygonScene(room);
 
   const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
     .map(f => furnitureToAABB(f, W, L))
@@ -407,7 +514,7 @@ export async function generateDepthBuffer(
   for (let py = 0; py < imgH; py++) {
     for (let px = 0; px < imgW; px++) {
       const [dx, dy, dz] = makeRayDir(px, py, imgW, imgH, aspect, tanHalf, cam);
-      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity);
+      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity, polyScene);
       rawBuf[py * imgW + px] =
         t === Infinity ? 0 : Math.round(255 * Math.max(0, 1 - t / maxDist));
     }
@@ -434,6 +541,7 @@ export async function generateLineartBuffer(
 
   const scene = buildScene(room, camIndex);
   const { width_m: W, length_m: L, height_m: H, camera: cam } = scene;
+  const polyScene = buildPolygonScene(room);
 
   const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
     .map(f => furnitureToAABB(f, W, L))
@@ -448,7 +556,7 @@ export async function generateLineartBuffer(
   for (let py = 0; py < imgH; py++) {
     for (let px = 0; px < imgW; px++) {
       const [dx, dy, dz] = makeRayDir(px, py, imgW, imgH, aspect, tanHalf, cam);
-      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity);
+      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity, polyScene);
       depth[py * imgW + px] = t === Infinity ? 1.0 : Math.min(1, t / maxDist);
     }
   }

@@ -55,7 +55,25 @@ export interface GeometryRoom {
   num_photos_needed: 1 | 2;
   walls: RoomWall[];
   suggested_cameras: CameraSuggestion[];
+  /**
+   * Optional outline shape. If absent or `{kind:'rectangle'}` the room is
+   * a simple rectangle of `dimensions.width_m × dimensions.length_m`.
+   * If `{kind:'polygon'}` the room outline is `shape.points` (clockwise from
+   * top-left, in millimetres from the bounding-box origin). `dimensions`
+   * still holds the bounding-box width/length for backwards-compat.
+   */
+  shape?: RoomShape;
 }
+
+/** 2D point in millimetres from the top-left of the room's bounding box. */
+export interface Point2D {
+  x_mm: number;
+  y_mm: number;
+}
+
+export type RoomShape =
+  | { kind: 'rectangle' }
+  | { kind: 'polygon'; points: Point2D[] };
 
 export interface RoomInfo {
   id: string;

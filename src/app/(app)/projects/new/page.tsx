@@ -1221,9 +1221,26 @@ function RoomSvgThumb({ room }: { room: ApartmentGeometry['rooms'][number] }) {
   const x = (W_VP - rectW) / 2;
   const y = (H_VP - rectH) / 2;
   const fill = CONFIRM_ROOM_TYPE_COLORS[room.type] ?? '#E0E0E0';
+
+  const isPolygon = room.shape?.kind === 'polygon';
+  // Scale polygon points (mm) into the bbox we just computed
+  const polygonPoints = isPolygon && room.shape?.kind === 'polygon'
+    ? room.shape.points
+        .map(p => {
+          const px = x + (p.x_mm / (w * 1000)) * rectW;
+          const py = y + (p.y_mm / (l * 1000)) * rectH;
+          return `${px.toFixed(2)},${py.toFixed(2)}`;
+        })
+        .join(' ')
+    : null;
+
   return (
     <svg width={W_VP} height={H_VP} viewBox={`0 0 ${W_VP} ${H_VP}`}>
-      <rect x={x} y={y} width={rectW} height={rectH} rx="3" fill={fill} stroke="rgba(0,0,0,0.15)" strokeWidth="1" />
+      {polygonPoints ? (
+        <polygon points={polygonPoints} fill={fill} stroke="rgba(0,0,0,0.15)" strokeWidth="1" strokeLinejoin="round" />
+      ) : (
+        <rect x={x} y={y} width={rectW} height={rectH} rx="3" fill={fill} stroke="rgba(0,0,0,0.15)" strokeWidth="1" />
+      )}
       <text x={W_VP / 2} y={y + rectH / 2 + 4} textAnchor="middle" fontSize="9" fill="rgba(0,0,0,0.55)">
         {w.toFixed(1)}×{l.toFixed(1)}
       </text>
@@ -1309,6 +1326,14 @@ function ConfirmStep({
               <div style={{ fontSize: 10, color: 'var(--ink)', fontWeight: 600, textAlign: 'center', lineHeight: 1.2, maxWidth: 90 }}>
                 {room.name}
               </div>
+              {room.shape?.kind === 'polygon' && (
+                <span style={{
+                  fontSize: 11, color: '#5a5a5a', background: '#EFEFEF',
+                  borderRadius: 6, padding: '1px 6px', fontWeight: 500,
+                }}>
+                  Сложная форма
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -1365,30 +1390,38 @@ function ConfirmStep({
               </div>
             </div>
 
-            {/* Dimensions — width and length only */}
+            {/* Dimensions — width and length only.
+                Read-only for polygons (would invalidate the outline). */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              {(['width_m', 'length_m'] as DimKey[]).map((dim) => (
-                <div key={dim}>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
-                    {dim === 'width_m' ? 'Ширина, м' : 'Длина, м'}
+              {(['width_m', 'length_m'] as DimKey[]).map((dim) => {
+                const polygonRoom = room.shape?.kind === 'polygon';
+                return (
+                  <div key={dim}>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
+                      {dim === 'width_m' ? 'Ширина, м' : 'Длина, м'}
+                      {polygonRoom && <span style={{ marginLeft: 4, color: '#8C7B6B' }}>(габарит)</span>}
+                    </div>
+                    <input
+                      type="number"
+                      min="0.5"
+                      max="30"
+                      step="0.1"
+                      defaultValue={room.dimensions[dim]}
+                      key={`${room.id}-${dim}`}
+                      onBlur={polygonRoom ? undefined : (e) => updateDim(idx, dim, e.target.value)}
+                      onChange={polygonRoom ? undefined : (e) => updateDim(idx, dim, e.target.value)}
+                      readOnly={polygonRoom}
+                      style={{
+                        width: '100%', borderRadius: 10, border: '1px solid var(--line)',
+                        padding: '8px 10px',
+                        background: polygonRoom ? '#F5F2EE' : 'var(--white)',
+                        color: polygonRoom ? 'var(--muted)' : 'var(--ink)',
+                        fontSize: 13, fontFamily: 'inherit', minHeight: 44, boxSizing: 'border-box',
+                      }}
+                    />
                   </div>
-                  <input
-                    type="number"
-                    min="0.5"
-                    max="30"
-                    step="0.1"
-                    defaultValue={room.dimensions[dim]}
-                    key={`${room.id}-${dim}`}
-                    onBlur={(e) => updateDim(idx, dim, e.target.value)}
-                    onChange={(e) => updateDim(idx, dim, e.target.value)}
-                    style={{
-                      width: '100%', borderRadius: 10, border: '1px solid var(--line)',
-                      padding: '8px 10px', background: 'var(--white)', color: 'var(--ink)',
-                      fontSize: 13, fontFamily: 'inherit', minHeight: 44, boxSizing: 'border-box',
-                    }}
-                  />
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}

@@ -1,5 +1,6 @@
 import Groq from 'groq-sdk';
 import type { GeometryRoom, RoomInfo, FurnitureObject } from '../geometry/types';
+import { getRoomArea } from '../geometry/polygon';
 
 // Re-export so existing callers (`import { RoomInfo } from '…/groq'`) keep working.
 export type { RoomInfo } from '../geometry/types';
@@ -492,7 +493,8 @@ function wallAwareFallback(params: WallAwareBriefParams, lightingDesc: string): 
   const styleDesc  = STYLE_DESC[params.style]   ?? params.style;
   const budgetDesc = BUDGET_DESC[params.budget]  ?? params.budget;
   const { width_m, length_m, height_m } = params.room.dimensions;
-  const area = width_m * length_m;
+  void width_m; void length_m;
+  const area = getRoomArea(params.room);
   const sizeTag  = area < 10 ? 'compact' : area < 20 ? 'medium-sized' : 'spacious';
   const heightTag = height_m < 2.6 ? 'low ceiling' : height_m > 2.9 ? 'high ceiling' : 'standard ceiling height';
 
@@ -523,7 +525,7 @@ export async function buildWallAwareBrief(
 ): Promise<{ prompt: string; negativePrompt: string }> {
   const { room, style, budget, wishes, cameraIndex = 0 } = params;
   const { width_m, length_m, height_m } = room.dimensions;
-  const area = width_m * length_m;
+  const area = getRoomArea(room);
 
   // Collect wall IDs that have at least one window feature
   const windowWallIds = room.walls

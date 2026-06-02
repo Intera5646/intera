@@ -1,6 +1,7 @@
 'use client';
 
 import type { GeometryRoom, FurnitureItem } from '../lib/geometry/types';
+import { getRoomArea } from '../lib/geometry/polygon';
 
 const MAX_W = 340;
 const PAD_T = 28;
@@ -28,7 +29,14 @@ function RoomPane({
   const rW = wMm * sc;
   const rH = lMm * sc;
   const svgH = PAD_T + rH + PAD_B;
-  const area = (room.dimensions.width_m * room.dimensions.length_m).toFixed(1);
+  const area = getRoomArea(room).toFixed(1);
+
+  const isPolygon = room.shape?.kind === 'polygon';
+  const polygonPoints = isPolygon && room.shape?.kind === 'polygon'
+    ? room.shape.points
+        .map(p => `${(PAD_H + p.x_mm * sc).toFixed(2)},${(PAD_T + p.y_mm * sc).toFixed(2)}`)
+        .join(' ')
+    : null;
 
   return (
     <svg
@@ -38,14 +46,24 @@ function RoomPane({
       style={{ display: 'block', maxWidth: '100%' }}
     >
       {/* Room outline */}
-      <rect
-        x={PAD_H} y={PAD_T}
-        width={rW} height={rH}
-        rx={4}
-        fill="white"
-        stroke="#888"
-        strokeWidth="1.5"
-      />
+      {polygonPoints ? (
+        <polygon
+          points={polygonPoints}
+          fill="white"
+          stroke="#888"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+        />
+      ) : (
+        <rect
+          x={PAD_H} y={PAD_T}
+          width={rW} height={rH}
+          rx={4}
+          fill="white"
+          stroke="#888"
+          strokeWidth="1.5"
+        />
+      )}
 
       {skeleton
         ? SKELETONS.map(([sx, sy, sw, sh], i) => (
@@ -144,11 +162,7 @@ export default function FloorPlanSVG({
   furnitureByRoom: Record<string, FurnitureItem[]>;
   loading?: boolean;
 }) {
-  const sorted = [...rooms].sort(
-    (a, b) =>
-      b.dimensions.width_m * b.dimensions.length_m -
-      a.dimensions.width_m * a.dimensions.length_m
-  );
+  const sorted = [...rooms].sort((a, b) => getRoomArea(b) - getRoomArea(a));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: MAX_W }}>

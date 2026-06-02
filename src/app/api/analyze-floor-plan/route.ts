@@ -10,7 +10,9 @@ import type {
   RoomWall,
   CameraSuggestion,
   WallFeature,
+  RoomShape,
 } from '../../../lib/geometry/types';
+import { normalizeRoomShape, polygonBoundingBoxMm, getRoomArea } from '../../../lib/geometry/polygon';
 
 interface AnalysisResult {
   roomCount: number;
@@ -189,6 +191,23 @@ For every enclosed space clearly bounded by walls:
 - Note door openings with their printed width in mm
 - Note wall thickness: thick hatched lines = external/load-bearing, thin single lines = partition walls
 
+For each space, also describe its overall SHAPE:
+- If the room is a clean rectangle with straight walls on all 4 sides, say
+  'shape: rectangle' and give just width × length.
+- If the room has a cutout, niche, L-shape, bay window, or any non-rectangular
+  outline, say 'shape: polygon' and list all corner points in order going
+  clockwise, starting from the top-left corner. For each corner give its
+  position in millimetres relative to the top-left corner of the room's
+  bounding box.
+
+Example for an L-shaped room 3000mm × 5340mm with a 900×890mm cutout in the
+bottom-right corner:
+  shape: polygon
+  points: (0,0), (3000,0), (3000,4450), (2100,4450), (2100,5340), (0,5340)
+
+Read these segment lengths from the dimension annotations printed on the plan.
+Do not invent measurements that are not written.
+
 Important rules:
 - Read numbers ONLY from what is printed on the drawing
 - Do NOT invent spaces — only describe areas with clear wall boundaries on all sides
@@ -213,9 +232,12 @@ Return ONLY this JSON structure:
       "type": "unknown",
       "type_hint": <see rules below>,
       "dimensions": {
-        "width_m": <from analysis, in meters>,
-        "length_m": <from analysis, in meters>,
+        "width_m": <bounding box width in meters>,
+        "length_m": <bounding box length in meters>,
         "height_m": null
+      },
+      "shape": {
+        "kind": "rectangle"
       },
       "openings": [
         { "kind": "door", "width_mm": <number> },
@@ -224,6 +246,29 @@ Return ONLY this JSON structure:
     }
   ]
 }
+
+For NON-rectangular rooms, replace the "shape" field with:
+  "shape": {
+    "kind": "polygon",
+    "points": [
+      {"x_mm": 0, "y_mm": 0},
+      {"x_mm": 3000, "y_mm": 0},
+      {"x_mm": 3000, "y_mm": 4450},
+      {"x_mm": 2100, "y_mm": 4450},
+      {"x_mm": 2100, "y_mm": 5340},
+      {"x_mm": 0, "y_mm": 5340}
+    ]
+  }
+
+Shape rules:
+- Default to "rectangle" unless the analysis text explicitly describes the
+  shape as non-rectangular or lists vertices.
+- For polygons, list points clockwise from the top-left corner. The last
+  point implicitly connects back to the first — do not duplicate the first
+  point at the end.
+- Polygons require at least 4 points (3 corners + close-back).
+- Compute "dimensions" as the BOUNDING BOX of the polygon: width_m =
+  (max x_mm − min x_mm) / 1000, length_m = (max y_mm − min y_mm) / 1000.
 
 type_hint rules — set ONLY when analysis explicitly mentions:
 - toilet symbol or bathtub → "bathroom"
@@ -390,10 +435,22 @@ function parseGeometryRoom(r: unknown, idx: number): GeometryRoom {
   const rawHint = String(room.type_hint ?? '').toLowerCase().trim();
   const type_hint = VALID_TYPE_HINTS_SET.has(rawHint) ? (rawHint as 'bathroom' | 'kitchen' | 'hallway' | 'balcony') : null;
 
+  // Parse shape — defaults to rectangle if missing/malformed
+  const shape: RoomShape = normalizeRoomShape(room.shape);
+
   const dims = (room.dimensions ?? {}) as Record<string, unknown>;
-  const width_m  = clampDim(dims.width_m  ?? dims.width,  0.5, 20) || defaults.width_m;
-  const length_m = clampDim(dims.length_m ?? dims.length, 0.5, 20) || defaults.length_m;
+  let width_m  = clampDim(dims.width_m  ?? dims.width,  0.5, 20) || defaults.width_m;
+  let length_m = clampDim(dims.length_m ?? dims.length, 0.5, 20) || defaults.length_m;
   const height_m = clampDim(dims.height_m ?? dims.height, 2.0, 5.0) || 2.7;
+
+  // If polygon and dimensions look like defaults/missing, derive from bbox.
+  if (shape.kind === 'polygon') {
+    const bbox = polygonBoundingBoxMm(shape.points);
+    const bboxW = (bbox.maxX - bbox.minX) / 1000;
+    const bboxL = (bbox.maxY - bbox.minY) / 1000;
+    if (bboxW > 0.5 && (!dims.width_m && !dims.width))  width_m  = clampDim(bboxW, 0.5, 30);
+    if (bboxL > 0.5 && (!dims.length_m && !dims.length)) length_m = clampDim(bboxL, 0.5, 30);
+  }
 
   const size_category = toSizeCategory(room.size_category, width_m, length_m);
   const area = width_m * length_m;
@@ -425,6 +482,7 @@ function parseGeometryRoom(r: unknown, idx: number): GeometryRoom {
     num_photos_needed,
     walls,
     suggested_cameras,
+    shape,
   };
 }
 
@@ -587,6 +645,7 @@ interface Step2Room {
   type_hint: 'bathroom' | 'kitchen' | 'hallway' | 'balcony' | null;
   width_m: number;
   length_m: number;
+  shape: RoomShape;
 }
 
 interface Step2Data {
@@ -611,8 +670,18 @@ function parseStep2Response(rawJson: string): Step2Data | null {
       // Dimensions may arrive in mm if the model didn't convert — normalise to metres
       const rawW = Number(dims.width_m ?? 0);
       const rawL = Number(dims.length_m ?? 0);
-      const width_m  = rawW  > 20 ? rawW  / 1000 : rawW;
-      const length_m = rawL  > 20 ? rawL  / 1000 : rawL;
+      let width_m  = rawW  > 20 ? rawW  / 1000 : rawW;
+      let length_m = rawL  > 20 ? rawL  / 1000 : rawL;
+
+      const shape: RoomShape = normalizeRoomShape(room.shape);
+      // For polygons, derive bounding box from points if dimensions look invalid
+      if (shape.kind === 'polygon') {
+        const bbox = polygonBoundingBoxMm(shape.points);
+        const bboxW = (bbox.maxX - bbox.minX) / 1000;
+        const bboxL = (bbox.maxY - bbox.minY) / 1000;
+        if (bboxW > 0.5 && (width_m  < 0.5 || width_m  > 30)) width_m  = bboxW;
+        if (bboxL > 0.5 && (length_m < 0.5 || length_m > 30)) length_m = bboxL;
+      }
 
       return {
         id:        String(room.id    ?? `room_${idx + 1}`),
@@ -620,6 +689,7 @@ function parseStep2Response(rawJson: string): Step2Data | null {
         type_hint: VALID_HINTS.has(rawHint) ? (rawHint as 'bathroom' | 'kitchen' | 'hallway' | 'balcony') : null,
         width_m:   clampDim(width_m,  0.5, 20),
         length_m:  clampDim(length_m, 0.5, 20),
+        shape,
       };
     });
 
@@ -755,12 +825,11 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
       num_photos_needed,
       walls,
       suggested_cameras,
+      shape: r.shape,
     };
   });
 
-  const totalArea = geometryRooms.reduce(
-    (sum, r) => sum + r.dimensions.width_m * r.dimensions.length_m, 0
-  );
+  const totalArea = geometryRooms.reduce((sum, r) => sum + getRoomArea(r), 0);
   const geometry: ApartmentGeometry = {
     is_bti_plan: true,
     apartment: {

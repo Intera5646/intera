@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseSessionCookie, verifySessionToken } from '../../../lib/auth';
 import type { GeometryRoom, FurnitureItem } from '../../../lib/geometry/types';
+import { pointInPolygon } from '../../../lib/geometry/polygon';
 
 export async function POST(req: NextRequest) {
   const token = parseSessionCookie(req.headers.get('cookie'));
@@ -29,6 +30,7 @@ export async function POST(req: NextRequest) {
   const width_mm = Math.round(room.dimensions.width_m * 1000);
   const length_mm = Math.round(room.dimensions.length_m * 1000);
   const ceiling_m = room.dimensions.height_m ?? 2.7;
+  const isPolygon = room.shape?.kind === 'polygon';
 
   const wallsJson = JSON.stringify(
     room.walls.map(w => ({
@@ -42,16 +44,26 @@ export async function POST(req: NextRequest) {
     }))
   );
 
+  // Polygon outline description for Kimi when shape is non-rectangular
+  const polygonNote = isPolygon && room.shape?.kind === 'polygon'
+    ? `\nThis room is NOT a simple rectangle. Its outline (polygon) is:\n` +
+      room.shape.points.map(p => `  (${Math.round(p.x_mm)}, ${Math.round(p.y_mm)})`).join('\n') +
+      `\n\nAll furniture must be placed within this outline. Do NOT place furniture\n` +
+      `in cutout regions (areas outside the polygon). Walking paths and clearances\n` +
+      `apply to the actual outline shape, not the bounding box.\n`
+    : '';
+
   const userPrompt =
     `You are a professional interior designer placing furniture.\n\n` +
     `Room: ${room.name}\n` +
     `Type: ${room.type}\n` +
-    `Size: ${room.dimensions.width_m}m × ${room.dimensions.length_m}m\n` +
+    `Bounding box: ${room.dimensions.width_m}m × ${room.dimensions.length_m}m\n` +
     `Ceiling: ${ceiling_m}m\n` +
     `Style: ${style}\n` +
     `Budget: ${budget}\n` +
-    `Walls: ${wallsJson}\n\n` +
-    `Return ONLY a valid JSON array, no explanation, no markdown:\n` +
+    `Walls: ${wallsJson}` +
+    polygonNote +
+    `\n\nReturn ONLY a valid JSON array, no explanation, no markdown:\n` +
     `[\n` +
     `  {\n` +
     `    "name": "Диван",\n` +
@@ -130,7 +142,23 @@ export async function POST(req: NextRequest) {
       }))
       .filter(item => item.name.length > 0);
 
-    return NextResponse.json({ furniture });
+    // Polygon filter: drop items whose center lies outside the room outline.
+    let finalFurniture = furniture;
+    if (room.shape?.kind === 'polygon') {
+      const polygon = room.shape.points;
+      const before = finalFurniture.length;
+      finalFurniture = finalFurniture.filter(item => {
+        const cx = item.x_mm + item.width_mm / 2;
+        const cy = item.y_mm + item.depth_mm / 2;
+        return pointInPolygon(cx, cy, polygon);
+      });
+      const dropped = before - finalFurniture.length;
+      if (dropped > 0) {
+        console.log(`[furniture-plan] Polygon filter for ${room.name}: dropped ${dropped} item(s) outside outline`);
+      }
+    }
+
+    return NextResponse.json({ furniture: finalFurniture });
   } catch (err) {
     console.error('[furniture-plan] Error for room', room.name, ':', err instanceof Error ? err.message : err);
     return NextResponse.json({ furniture: [] });

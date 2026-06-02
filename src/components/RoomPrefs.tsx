@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { GeometryRoom, GeneralPreferences, RoomPreference } from '../lib/geometry/types';
+import { getRoomArea } from '../lib/geometry/polygon';
 
 const ROOM_TYPE_ICONS: Record<string, string> = {
   living: '🛋',
@@ -63,7 +64,7 @@ export default function RoomPrefs({
   if (!room || !pref) return null;
 
   const icon = ROOM_TYPE_ICONS[room.type] ?? '🏠';
-  const area = (room.dimensions.width_m * room.dimensions.length_m).toFixed(1);
+  const area = getRoomArea(room).toFixed(1);
 
   return (
     <div className="scr paper" style={{ minHeight: '100vh', overflow: 'hidden' }}>
