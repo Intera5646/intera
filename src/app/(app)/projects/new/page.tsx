@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { ApartmentGeometry, FurnitureItem, GeneralPreferences, RoomPreference } from '../../../../lib/geometry/types';
+import type { ApartmentGeometry, FurnitureItem, GeneralPreferences, RoomPreference, RoomShape } from '../../../../lib/geometry/types';
+import { polygonBoundingBoxMm } from '../../../../lib/geometry/polygon';
 import { createClient } from '@supabase/supabase-js';
 import FloorPlanSVG from '../../../../components/FloorPlanSVG';
 import GeneralPrefs from '../../../../components/GeneralPrefs';
 import RoomPrefs from '../../../../components/RoomPrefs';
+import PolygonEditor from '../../../../components/PolygonEditor';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -1259,6 +1261,8 @@ function ConfirmStep({
 }) {
   type DimKey = 'width_m' | 'length_m';
 
+  const [editingShapeIdx, setEditingShapeIdx] = useState<number | null>(null);
+
   const updateName = (idx: number, name: string) => {
     const rooms = geometry.rooms.map((r, i) => i === idx ? { ...r, name } : r);
     onChange({ ...geometry, rooms });
@@ -1277,6 +1281,26 @@ function ConfirmStep({
     const rooms = geometry.rooms.map((r, i) =>
       i === idx ? { ...r, dimensions: { ...r.dimensions, [dim]: val } } : r
     );
+    onChange({ ...geometry, rooms });
+  };
+
+  const updateShape = (idx: number, shape: RoomShape) => {
+    const rooms = geometry.rooms.map((r, i) => {
+      if (i !== idx) return r;
+      if (shape.kind === 'polygon') {
+        const bbox = polygonBoundingBoxMm(shape.points);
+        return {
+          ...r,
+          shape,
+          dimensions: {
+            ...r.dimensions,
+            width_m: (bbox.maxX - bbox.minX) / 1000,
+            length_m: (bbox.maxY - bbox.minY) / 1000,
+          },
+        };
+      }
+      return { ...r, shape: { kind: 'rectangle' as const } };
+    });
     onChange({ ...geometry, rooms });
   };
 
@@ -1423,6 +1447,19 @@ function ConfirmStep({
                 );
               })}
             </div>
+
+            {/* Shape edit button */}
+            <button
+              type="button"
+              onClick={() => setEditingShapeIdx(idx)}
+              style={{
+                alignSelf: 'flex-start', fontSize: 12, color: 'var(--muted)',
+                background: 'none', border: '1px solid rgba(34,30,26,0.15)',
+                borderRadius: 8, padding: '5px 10px', cursor: 'pointer',
+              }}
+            >
+              {room.shape?.kind === 'polygon' ? '✏ Форма: сложная' : '✏ Настроить форму'}
+            </button>
           </div>
         ))}
       </div>
@@ -1432,6 +1469,26 @@ function ConfirmStep({
           Комнаты не определены — генерация продолжится с параметрами по умолчанию.
         </div>
       )}
+
+      {editingShapeIdx !== null && (() => {
+        const editRoom = geometry.rooms[editingShapeIdx];
+        if (!editRoom) return null;
+        return (
+          <PolygonEditor
+            initialShape={editRoom.shape ?? { kind: 'rectangle' }}
+            boundingBox={{
+              width_mm: editRoom.dimensions.width_m * 1000,
+              length_mm: editRoom.dimensions.length_m * 1000,
+            }}
+            roomName={editRoom.name}
+            onSave={(shape) => {
+              updateShape(editingShapeIdx, shape);
+              setEditingShapeIdx(null);
+            }}
+            onCancel={() => setEditingShapeIdx(null)}
+          />
+        );
+      })()}
     </section>
   );
 }
