@@ -16,10 +16,12 @@ import {
   buildRoomPrompts,
   buildWallAwareBrief,
   buildApartmentReport,
+  buildApartmentDesignVision,
   buildRoomFurniturePlan,
   formatReportText,
   type DesignBrief,
   type DesignerText,
+  type DesignVision,
   type RoomInfo,
   type RoomPrompt,
 } from '../../../lib/ai/groq';
@@ -794,13 +796,28 @@ async function runBtiPipelineV2(ctx: {
 
   console.log(`[BTI-v2] Processing ${geometry.rooms.length} rooms in parallel batches of 3`);
 
+  // Generate apartment design vision ONCE before any room work
+  let designVision: DesignVision | null = null;
+  try {
+    designVision = await buildApartmentDesignVision({
+      rooms: geometry.rooms,
+      apartmentType: params.apartmentType,
+      style: params.style,
+      budget: params.budget,
+      wishes: params.wishes || undefined,
+    });
+    console.log('[BTI-v2] Design vision:', designVision.concept.slice(0, 100));
+  } catch (err) {
+    console.warn('[BTI-v2] Design vision failed (non-fatal, using generic prompts):', err instanceof Error ? err.message : err);
+  }
+
   const cameraMetas: CameraMetaEntry[] = [];
   let synchronouslyFailedCount = 0;
 
   const roomsWithIndex = geometry.rooms.map((room, idx) => ({ room, idx }));
   await processInBatches(roomsWithIndex, 3, async ({ room, idx }) => {
     try {
-      const result = await runBtiRoomV2({ room, roomIndex: idx, params });
+      const result = await runBtiRoomV2({ room, roomIndex: idx, params, designVision: designVision ?? undefined });
       cameraMetas.push(result.cameraMeta);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -861,8 +878,9 @@ async function runBtiRoomV2(opts: {
   room: GeometryRoom;
   roomIndex: number;
   params: RunGenerationParams;
+  designVision?: DesignVision;
 }): Promise<{ renderUrls: string[]; cameraMeta: CameraMetaEntry }> {
-  const { room, roomIndex, params } = opts;
+  const { room, roomIndex, params, designVision } = opts;
   const roomPref = params.roomPrefs.find((p) => p.roomId === room.id) ?? null;
   const camIdx = 0;
 
@@ -882,7 +900,7 @@ async function runBtiRoomV2(opts: {
 
   // Step A: plan furniture with Groq designer
   console.log(`[BTI-v2:${room.name}] Planning furniture`);
-  const rawFurniture = await buildRoomFurniturePlan(sanitizedRoom);
+  const rawFurniture = await buildRoomFurniturePlan(sanitizedRoom, designVision ?? undefined);
   const furniture = rawFurniture.filter(f => f.anchorWallId !== camWall);
 
   // FIX 6: wider FOV for small rooms so the whole space fits the frame
@@ -924,6 +942,7 @@ async function runBtiRoomV2(opts: {
     wishes: roomWishes || undefined,
     cameraIndex: camIdx,
     furniture,
+    designVision: designVision ?? undefined,
   });
 
   // Step E: fire SDXL prediction asynchronously — returns prediction ID immediately
@@ -934,9 +953,7 @@ async function runBtiRoomV2(opts: {
     prompt,
     negativePrompt,
     numOutputs: 1,
-    numInferenceSteps: 30,
-    depthScale:   0.8,
-    lineartScale: 0.6,
+    // depthScale / lineartScale / numInferenceSteps use updated defaults in adapter
   });
   console.log(`[BTI-v2:${room.name}] Prediction queued, id: ${predictionId}`);
 

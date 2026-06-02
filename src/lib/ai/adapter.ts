@@ -259,13 +259,13 @@ export async function generateSdxlMultiControlnet(
   const client = getClient();
 
   const numOutputs       = params.numOutputs        ?? 1;
-  const inferenceSteps   = params.numInferenceSteps  ?? 30;
-  const depthScale       = params.depthScale         ?? 0.8;
-  const lineartScale     = params.lineartScale       ?? 0.6;
+  const inferenceSteps   = params.numInferenceSteps  ?? 40;
+  const depthScale       = params.depthScale         ?? 0.7;
+  const lineartScale     = params.lineartScale       ?? 0.4;
 
   const input = {
     prompt:                            params.prompt,
-    negative_prompt:                   params.negativePrompt ?? 'ugly, bad quality, distorted walls, cartoon, watermark, text, blurry',
+    negative_prompt:                   params.negativePrompt ?? 'bad geometry, distorted walls, unrealistic proportions, warped perspective, blurry, low quality, cartoon, watermark, text, sparse furniture, empty room, minimal styling, bare walls, cluttered, messy, CGI plastic look, harsh fluorescent lighting, oversaturated colors',
     num_outputs:                       numOutputs,
     num_inference_steps:               inferenceSteps,
     guidance_scale:                    7.5,

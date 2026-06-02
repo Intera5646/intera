@@ -69,6 +69,84 @@ async function callKimi(params: {
   return result;
 }
 
+// ── Apartment-wide design vision ──────────────────────────────────────────────
+
+export interface DesignVision {
+  concept: string;
+  palette: {
+    dominant: string;
+    secondary: string;
+    accent: string;
+  };
+  moodKeywords: string[];
+  statementMaterials: string[];
+  lightingPhilosophy: string;
+  /** roomId → named focal element for that room */
+  perRoomFocalPoints: Record<string, string>;
+}
+
+export async function buildApartmentDesignVision(params: {
+  rooms: GeometryRoom[];
+  apartmentType?: string;
+  style: string;
+  budget: string;
+  wishes?: string;
+}): Promise<DesignVision> {
+  const { rooms, style, budget, apartmentType, wishes } = params;
+
+  const roomList = rooms.map(r => {
+    const area = getRoomArea(r).toFixed(0);
+    return `- ${r.name} (${r.type}, ${area}m², id:${r.id})`;
+  }).join('\n');
+
+  const contextLines = [
+    `Style direction: ${style}`,
+    `Budget tier: ${budget}`,
+    ...(apartmentType ? [`Apartment type: ${apartmentType}`] : []),
+    ...(wishes?.trim() ? [`Client wishes: ${wishes.slice(0, 300)}`] : []),
+  ].join('\n');
+
+  const systemPrompt =
+    'You are a senior interior designer with 20 years of experience specialising in cohesive residential apartment design. ' +
+    'You think holistically — every room connects through materials, palette, and mood. ' +
+    'You write design visions with precision and personality, avoiding generic words like "modern", "clean", "cosy", "elegant". ' +
+    'Return only valid JSON, no other text, no markdown fences.';
+
+  const userPrompt =
+    `Create a unified design vision for this entire apartment BEFORE any room-by-room work.\n\n` +
+    `${contextLines}\n\nRooms:\n${roomList}\n\n` +
+    `Return this JSON exactly (fill every field with specific, evocative language):\n` +
+    `{\n` +
+    `  "concept": "1-2 sentences naming the design philosophy with personality — e.g. 'Warm Scandinavian minimalism with rough textures and brass accents, evoking a curated Finnish summer house in the city.'",\n` +
+    `  "palette": {\n` +
+    `    "dominant": "60% — specific color/material — e.g. 'warm oak flooring and oak veneer cabinetry'",\n` +
+    `    "secondary": "30% — e.g. 'off-white linen walls and unbleached linen curtains'",\n` +
+    `    "accent": "10% — e.g. 'blackened steel hardware, raw terracotta ceramics'"\n` +
+    `  },\n` +
+    `  "moodKeywords": ["6-8 distinctive single words, no clichés — e.g. tactile, sun-bleached, lived-in, sculptural, grounded, considered"],\n` +
+    `  "statementMaterials": ["3-4 specific recurring materials — e.g. 'reeded oak', 'unlacquered brass', 'limewash plaster'"],\n` +
+    `  "lightingPhilosophy": "1 sentence — e.g. 'Layered warm ambient + sculptural pendants + low table lamps; no recessed downlights.'",\n` +
+    `  "perRoomFocalPoints": {\n` +
+    rooms.map(r => `    "${r.id}": "named focal element for ${r.name} — e.g. 'limewashed plaster headboard wall', 'open shelving island in oak', 'arched mirror above console'"`).join(',\n') +
+    `\n  }\n` +
+    `}`;
+
+  const raw = await callKimi({
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    temperature: 0.7,
+    max_tokens: 1200,
+    label: 'buildApartmentDesignVision',
+  });
+
+  const first = raw.indexOf('{');
+  const last  = raw.lastIndexOf('}');
+  if (first === -1 || last <= first) throw new Error('No JSON object in design vision response');
+  return JSON.parse(raw.slice(first, last + 1)) as DesignVision;
+}
+
 export interface RoomPrompt {
   room_id: string;
   room_name: string;
@@ -409,15 +487,18 @@ export interface WallAwareBriefParams {
   wishes?: string;
   cameraIndex?: number;
   furniture?: FurnitureObject[];
+  designVision?: DesignVision;
 }
 
-// Negative prompt tuned for Flux Depth Pro (geometry comes from depth map,
-// so "bad geometry" terms are omitted to avoid fighting the control signal).
-// Frame-contract terms prevent Flux from hallucinating extra doors/windows.
+// Negative prompt for SDXL ControlNet depth+lineart renders.
+// Adds styling-push terms ("sparse furniture", "bare walls") to encourage
+// fully-dressed scenes, while keeping geometry and quality guards.
 const FLUX_NEGATIVE_PROMPT =
-  'blurry, low quality, cartoon, illustration, watermark, text, logo, people, ' +
-  'faces, distorted scale, floating objects, oversaturated, flat lighting, ' +
-  'dark shadows, underexposed, noise, artifacts, ' +
+  'bad geometry, distorted walls, unrealistic proportions, warped perspective, ' +
+  'blurry, low quality, cartoon, illustration, watermark, text, logo, people, faces, ' +
+  'sparse furniture, empty room, minimal styling, bare walls, cluttered, messy, ' +
+  'mismatched scale, video-game render, CGI plastic look, harsh fluorescent lighting, ' +
+  'oversaturated colors, flat lighting, dark shadows, underexposed, noise, artifacts, ' +
   'extra doors, extra windows, invented arches, hallway openings, wrong wall openings';
 
 const ROOM_TYPE_EN: Record<string, string> = {
@@ -537,11 +618,10 @@ function wallAwareFallback(params: WallAwareBriefParams, lightingDesc: string): 
 export async function buildWallAwareBrief(
   params: WallAwareBriefParams,
 ): Promise<{ prompt: string; negativePrompt: string }> {
-  const { room, style, budget, wishes, cameraIndex = 0 } = params;
+  const { room, style, budget, wishes, cameraIndex = 0, designVision } = params;
   const { width_m, length_m, height_m } = room.dimensions;
   const area = getRoomArea(room);
 
-  // Collect wall IDs that have at least one window feature
   const windowWallIds = room.walls
     .filter(w => w.features.some(f => f.type === 'window'))
     .map(w => w.id);
@@ -555,42 +635,62 @@ export async function buildWallAwareBrief(
   const heightTag  = height_m < 2.6 ? 'low ceiling' : height_m > 2.9 ? 'high ceiling' : 'standard ceiling height';
   const camDesc    = cam?.description ?? 'wide angle interior shot';
 
-  // Number of windows and doors for atmosphere hints
-  const totalWindows = room.walls.reduce((n, w) => n + w.features.filter(f => f.type === 'window').length, 0);
-  const windowsHint  = totalWindows === 0 ? 'no windows' : totalWindows === 1 ? 'single window' : 'multiple windows';
-
-  const systemPrompt =
-    'You are a prompt engineer for Flux Depth Pro. The control image is a 3D block model of the room ' +
-    'with furniture shown in semantic colors (e.g. blue-grey sofa, white bathtub, brown door, sky-blue window). ' +
-    'Render it as a photorealistic interior, keeping every furniture piece and opening exactly where its colored ' +
-    'block sits. Your prompt focuses on materials, lighting atmosphere, style mood and camera framing — ' +
-    'describe the furniture that is present, do not omit it. Write in English only. Return JSON only.';
-
   const furnitureClause = params.furniture?.length
-    ? `Furniture already placed in scene: ${describeFurniture(params.furniture)}.\n`
+    ? `Furniture: ${describeFurniture(params.furniture)}.`
     : '';
 
-  // FIX 4: explicit per-wall feature description — constrains Flux to exact openings
   const wallFrameDesc = describeVisibleWalls(room, cameraWallId);
-  const frameContract =
-    `\nFRAME CONTRACT — render EXACTLY these openings, no extras:\n${wallFrameDesc}\n`;
+
+  // ── Vision-based path (no LLM call needed) ───────────────────────────────────
+  if (designVision) {
+    const focalPoint = designVision.perRoomFocalPoints[room.id]
+      ?? `a statement ${roomTypeEn} feature wall`;
+    const materials = designVision.statementMaterials.join(', ');
+    const mood      = designVision.moodKeywords.join(', ');
+
+    const promptParts = [
+      `Editorial interior design photograph, ${roomTypeEn}, ${sizeTag}, ${heightTag}.`,
+      `Designed following: ${designVision.concept}`,
+      `FOCAL POINT: ${focalPoint} dominates the wall opposite the camera, treated with intentional drama.`,
+      `MATERIAL PALETTE: 60% ${designVision.palette.dominant}, 30% ${designVision.palette.secondary}, 10% ${designVision.palette.accent}.`,
+      `The ${materials} recur as signature touches throughout.`,
+      `LAYERING (mandatory, do not omit): floor → area rug under furniture → furniture arranged with intentional asymmetry → table-height accent pieces (vases, books, ceramics) → wall art clustered off-center → ceiling element (pendant or feature light).`,
+      `LIGHTING: ${designVision.lightingPhilosophy}`,
+      `MOOD: ${mood}. Lived-in, not staged. One sculptural hero piece clearly visible. Generous negative space.`,
+      `${lightingDesc}. ${camDesc}. Golden hour soft directional natural light.`,
+      `Architectural Digest editorial quality. Shot on medium-format camera, 35mm equivalent, slight grain. No people.`,
+      ...(furnitureClause ? [furnitureClause] : []),
+      ...(wishes?.trim() ? [wishes.slice(0, 200)] : []),
+      // Frame contract as a soft instruction embedded in the prompt
+      `FRAME: ${wallFrameDesc.trim().replace(/\n/g, '; ')}.`,
+    ];
+
+    const prompt = promptParts.join(' ');
+    console.log('[buildWallAwareBrief] Vision prompt:', prompt.length, 'chars | room:', room.type, `${area.toFixed(0)}m²`);
+    return { prompt, negativePrompt: FLUX_NEGATIVE_PROMPT };
+  }
+
+  // ── Fallback path: Kimi-generated brief (no design vision) ───────────────────
+  const totalWindows = room.walls.reduce((n, w) => n + w.features.filter(f => f.type === 'window').length, 0);
+  const windowsHint  = totalWindows === 0 ? 'no windows' : totalWindows === 1 ? 'single window' : 'multiple windows';
+  const frameContract = `\nFRAME CONTRACT — render EXACTLY these openings, no extras:\n${wallFrameDesc}\n`;
+
+  const systemPrompt =
+    'You are an expert SDXL prompt engineer specialising in interior design photography. ' +
+    'The control image is a 3D block model; render it as a fully-styled editorial interior photo. ' +
+    'Describe materials with precision, suggest layered lighting, and include accent pieces. Write in English. Return JSON only.';
 
   const userPrompt =
-    `Room: ${roomTypeEn}\n` +
-    `Dimensions: ${width_m.toFixed(1)} × ${length_m.toFixed(1)} m, ${sizeTag}, ${heightTag}\n` +
+    `Room: ${roomTypeEn}, ${sizeTag}, ${heightTag}\n` +
+    `Dimensions: ${width_m.toFixed(1)} × ${length_m.toFixed(1)} m\n` +
     `Windows: ${windowsHint}\n` +
     `Lighting: ${lightingDesc}\n` +
-    `Camera angle: ${camDesc}\n` +
-    `Style: ${style}\n` +
-    `Budget tier: ${budget}\n` +
-    furnitureClause +
+    `Camera: ${camDesc}\n` +
+    `Style: ${style} | Budget: ${budget}\n` +
+    (furnitureClause ? furnitureClause + '\n' : '') +
     (wishes?.trim() ? `Client wishes: ${wishes.slice(0, 200)}\n` : '') +
     frameContract +
-    `\nReturn JSON:\n` +
-    `{\n` +
-    `  "prompt": "photorealistic interior photograph, [room], [style], [materials], [furniture list with positions], [lighting], [camera], 8K, architectural photography, no people",\n` +
-    `  "negative_prompt": "${FLUX_NEGATIVE_PROMPT}"\n` +
-    `}`;
+    `\nReturn JSON: { "prompt": "...", "negative_prompt": "${FLUX_NEGATIVE_PROMPT}" }`;
 
   try {
     const raw = await callKimi({
@@ -599,19 +699,19 @@ export async function buildWallAwareBrief(
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.35,
-      max_tokens: 450,
+      max_tokens: 500,
       label: `buildWallAwareBrief:${room.type}`,
     });
-    const parsed = JSON.parse(raw) as { prompt?: string; negative_prompt?: string };
-
-    if (parsed.prompt && parsed.prompt.length > 20) {
-      console.log('[buildWallAwareBrief] Kimi ok — prompt:', parsed.prompt.length, 'chars | room:', room.type, `${area.toFixed(0)}m²`);
-      return {
-        prompt:         parsed.prompt,
-        negativePrompt: parsed.negative_prompt ?? FLUX_NEGATIVE_PROMPT,
-      };
+    const first = raw.indexOf('{');
+    const last  = raw.lastIndexOf('}');
+    if (first !== -1 && last > first) {
+      const parsed = JSON.parse(raw.slice(first, last + 1)) as { prompt?: string; negative_prompt?: string };
+      if (parsed.prompt && parsed.prompt.length > 20) {
+        console.log('[buildWallAwareBrief] Kimi ok —', parsed.prompt.length, 'chars | room:', room.type);
+        return { prompt: parsed.prompt, negativePrompt: parsed.negative_prompt ?? FLUX_NEGATIVE_PROMPT };
+      }
     }
-    console.warn('[buildWallAwareBrief] Kimi returned empty prompt, using fallback');
+    console.warn('[buildWallAwareBrief] Kimi returned empty/invalid prompt, using fallback');
   } catch (err) {
     console.warn('[buildWallAwareBrief] Kimi failed, using fallback:', err instanceof Error ? err.message : err);
   }
@@ -838,7 +938,10 @@ function validateFurnitureResponse(raw: unknown, room: GeometryRoom): FurnitureO
   });
 }
 
-export async function buildRoomFurniturePlan(room: GeometryRoom): Promise<FurnitureObject[]> {
+export async function buildRoomFurniturePlan(
+  room: GeometryRoom,
+  designVision?: DesignVision,
+): Promise<FurnitureObject[]> {
   const { width_m: W, length_m: L, height_m: H } = room.dimensions;
 
   const wallLines = room.walls.map(wall => {
@@ -851,45 +954,65 @@ export async function buildRoomFurniturePlan(room: GeometryRoom): Promise<Furnit
   }).join('\n');
 
   const mandatory = MANDATORY_FURNITURE[room.type] ?? 'appropriate furniture for this room type';
-  // Camera is at W3 — furniture there would occlude the viewpoint
   const camWall = room.suggested_cameras[0]?.camera_at_wall_id ?? 'W3';
+  const focalPoint = designVision?.perRoomFocalPoints[room.id];
+
+  const designerPrinciples =
+    `DESIGNER PRINCIPLES (follow these in order):\n` +
+    `1. ANCHOR PIECE: Identify the primary piece for this room type (bed for bedroom, sofa for living, dining table for kitchen-living, vanity for bath). Place it against or facing the focal wall (W1 = back wall), not against ${camWall}.\n` +
+    `2. FUNCTION ZONES: Identify 2-3 activity zones (e.g. sleeping + dressing + reading). Each zone gets 1-3 items that relate spatially.\n` +
+    `3. SIGHT LINE: From the entrance (${camWall}), the first visible element should be the anchor piece facing you, NOT the side of a sofa or the foot of a bed.\n` +
+    `4. ASYMMETRIC BALANCE: Pair a tall vertical element (wardrobe, shelving, floor lamp) on one side with a wide low element (tv_unit, coffee_table) on the other side. Avoid mirror-image symmetry.\n` +
+    `5. CIRCULATION: Minimum 700mm clear path between every pair of furniture zones. Check door openings — keep 900mm clear in front of each door.\n` +
+    `6. LAYERING: Every anchor zone needs: an implied area rug (show as a low, wide, flat piece if needed), plus at least one accent piece (a lamp at nightstand height, a small shelf for ceramics).\n` +
+    `7. STATEMENT: Include exactly ONE statement piece — either an oversized shelving unit, a sculptural console, a distinctive accent chair, or an unusually proportioned table. Not one of every category.\n`;
+
+  const focalClause = focalPoint
+    ? `\nFOCAL WALL (W1 back wall): "${focalPoint}" — anchor the primary piece to this wall or facing it.\n`
+    : '';
 
   const userPrompt =
     `Place furniture in this room for a photorealistic 3D depth map render.\n\n` +
-    `Room type: ${room.type} (${room.name})\n` +
+    `Room: ${room.type} (${room.name})\n` +
     `Dimensions: W=${W.toFixed(1)}m × L=${L.toFixed(1)}m × H=${H.toFixed(1)}m\n` +
     `Walls (ID, length, features):\n${wallLines}\n\n` +
-    `Wall system: W1=back(Z far), W2=right(X far), W3=front(Z near), W4=left(X=0)\n` +
-    `positionAlongWall: 0.0=start of wall, 1.0=end of wall\n\n` +
-    `Required furniture: ${mandatory}\n\n` +
-    `Rules:\n` +
-    `1. Never place furniture blocking a door — keep door openings clear (check features above)\n` +
-    `2. Never place furniture over a window\n` +
-    `3. Leave at least 0.8m walking clearance between pieces\n` +
-    `4. positionAlongWall + widthM / wallLength must be ≤ 1.0 (furniture must fit on wall)\n` +
-    `5. Do not place furniture against ${camWall} (camera is there)\n\n` +
+    `Wall system: W1=back(Z far), W2=right(X far), W3=front(Z near)=CAMERA WALL, W4=left(X=0)\n` +
+    `positionAlongWall: 0.0=start of wall, 1.0=end of wall\n` +
+    focalClause +
+    `\nRequired furniture: ${mandatory}\n\n` +
+    designerPrinciples +
+    `\nHard rules:\n` +
+    `- Never place furniture blocking a door opening\n` +
+    `- Never place furniture over a window\n` +
+    `- positionAlongWall + widthM / wallLength must be ≤ 1.0\n` +
+    `- Do NOT place furniture against ${camWall} (camera wall)\n\n` +
     `Return JSON: { "furniture": [ ... ] }\n` +
     `Each item: { "id":"F1", "type":"sofa", "anchorWallId":"W1", "positionAlongWall":0.1, "widthM":2.1, "depthM":0.9, "heightM":0.85, "facing":"center" }\n` +
-    `Use these exact type names so the render colors them correctly: sofa, bed, wardrobe, nightstand, tv_unit, ` +
+    `Exact type names: sofa, bed, wardrobe, nightstand, tv_unit, ` +
     `coffee_table, shelving, console_table, kitchen_run, upper_cabinets, fridge, sink_kitchen, stove, ` +
-    `bathtub, shower, toilet, vanity_sink, corner_sink.\n` +
-    `For wall-mounted items (upper_cabinets) set "yOffsetM" to the floor clearance (e.g. 1.5).\n` +
-    `Kitchen work sequence along one wall: fridge → sink_kitchen → prep gap → stove, with kitchen_run as the base counter and upper_cabinets above it.\n` +
-    `Realistic sizes: sofa~2.0×0.9×0.85, bed~1.6×2.0×0.55, wardrobe~1.2×0.6×2.2, fridge~0.65×0.65×1.85, ` +
-    `sink_kitchen~0.8×0.6×0.9, stove~0.6×0.6×0.9, kitchen_run~[wall_width]×0.6×0.9, upper_cabinets~[wall_width]×0.35×0.7 (yOffsetM 1.5), ` +
-    `toilet~0.4×0.65×0.8, bathtub~1.7×0.75×0.6, shower~0.9×0.9×2.0, vanity_sink~0.85×0.55×0.85, corner_sink~0.4×0.4×0.8`;
+    `bathtub, shower, toilet, vanity_sink, corner_sink, accent_chair, dining_table, dining_chair.\n` +
+    `Wall-mounted items (upper_cabinets): set "yOffsetM" to floor clearance (e.g. 1.5).\n` +
+    `Kitchen sequence: fridge → sink_kitchen → prep gap → stove, kitchen_run as base counter, upper_cabinets above.\n` +
+    `Sizes: sofa~2.0×0.9×0.85, bed~1.6×2.0×0.55, wardrobe~1.2×0.6×2.2, accent_chair~0.75×0.75×0.85, ` +
+    `dining_table~1.4×0.9×0.76, dining_chair~0.45×0.45×0.85, fridge~0.65×0.65×1.85, ` +
+    `sink_kitchen~0.8×0.6×0.9, stove~0.6×0.6×0.9, kitchen_run~[wall_width]×0.6×0.9, upper_cabinets~[wall_width]×0.35×0.7, ` +
+    `toilet~0.4×0.65×0.8, bathtub~1.7×0.75×0.6, shower~0.9×0.9×2.0, vanity_sink~0.85×0.55×0.85`;
 
   try {
     const raw = await callKimi({
       messages: [
-        { role: 'system', content: 'You are an interior designer placing furniture. Return only valid JSON.' },
+        { role: 'system', content: 'You are a senior interior designer placing furniture according to professional design principles. Return only valid JSON.' },
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.3,
-      max_tokens: 800,
+      max_tokens: 900,
       label: `buildRoomFurniturePlan:${room.name}`,
     });
-    const parsed = JSON.parse(raw) as { furniture?: unknown };
+    const first = raw.indexOf('{');
+    const last  = raw.lastIndexOf('}');
+    const parsed = (first !== -1 && last > first)
+      ? JSON.parse(raw.slice(first, last + 1)) as { furniture?: unknown }
+      : JSON.parse(raw) as { furniture?: unknown };
     const validated = validateFurnitureResponse(parsed.furniture, room);
 
     // FIX 1: strip any items Groq placed on the camera wall despite instruction
