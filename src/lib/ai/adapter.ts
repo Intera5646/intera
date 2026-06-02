@@ -220,8 +220,23 @@ export async function generateDepthMap(imageUrl: string): Promise<string> {
 }
 
 // ── SDXL Multi-ControlNet (dual depth+lineart conditioning) ──────────────────
-// Uses fofr/sdxl-multi-controlnet-lora on Replicate.
-// controlnet_1 = depth map (XL Depth model), controlnet_2 = lineart map.
+// Uses fofr/sdxl-multi-controlnet-lora on Replicate, pinned to a specific
+// version SHA so the SDK routes to /v1/predictions (community model endpoint)
+// rather than /v1/models/.../predictions (which 404s for community models).
+//
+// Verified parameter names (cog source):
+//   prompt, negative_prompt, num_outputs, num_inference_steps, guidance_scale
+//   controlnet_1, controlnet_1_image, controlnet_1_conditioning_scale,
+//   controlnet_1_start, controlnet_1_end
+//   controlnet_2, controlnet_2_image, controlnet_2_conditioning_scale,
+//   controlnet_2_start, controlnet_2_end
+// Controlnet choices: 'depth_midas', 'depth_leres', 'lineart', 'lineart_anime',
+//   'canny', 'edge_canny', 'openpose', 'soft_edge_hed', 'soft_edge_pidi', ...
+
+const SDXL_MULTI_CONTROLNET_VERSION =
+  '89eb212b3d1366a83e949c12a4b45dfe6b6b313b594cb8268e864931ac9ffb16';
+const SDXL_MULTI_CONTROLNET_MODEL =
+  `fofr/sdxl-multi-controlnet-lora:${SDXL_MULTI_CONTROLNET_VERSION}` as const;
 
 export type SdxlMultiControlnetParams = {
   /** Public URL of the grayscale depth PNG */
@@ -248,36 +263,55 @@ export async function generateSdxlMultiControlnet(
   const depthScale       = params.depthScale         ?? 0.8;
   const lineartScale     = params.lineartScale       ?? 0.6;
 
+  const input = {
+    prompt:                            params.prompt,
+    negative_prompt:                   params.negativePrompt ?? 'ugly, bad quality, distorted walls, cartoon, watermark, text, blurry',
+    num_outputs:                       numOutputs,
+    num_inference_steps:               inferenceSteps,
+    guidance_scale:                    7.5,
+    controlnet_1:                      'depth_midas',
+    controlnet_1_image:                params.depthMapUrl,
+    controlnet_1_conditioning_scale:   depthScale,
+    controlnet_1_start:                0.0,
+    controlnet_1_end:                  1.0,
+    controlnet_2:                      'lineart',
+    controlnet_2_image:                params.lineartUrl,
+    controlnet_2_conditioning_scale:   lineartScale,
+    controlnet_2_start:                0.0,
+    controlnet_2_end:                  1.0,
+  };
+
   console.log(
-    '[sdxl-multi-controlnet] Starting | outputs:', numOutputs,
+    '[sdxl-multi-controlnet] Calling', SDXL_MULTI_CONTROLNET_MODEL,
+    '| outputs:', numOutputs,
     '| depth_scale:', depthScale,
     '| lineart_scale:', lineartScale,
     '| depth:', params.depthMapUrl.slice(0, 70),
+    '| lineart:', params.lineartUrl.slice(0, 70),
   );
 
-  const output = await client.run(
-    'fofr/sdxl-multi-controlnet-lora' as `${string}/${string}`,
-    {
-      input: {
-        prompt:              params.prompt,
-        negative_prompt:     params.negativePrompt ?? 'ugly, bad quality, distorted walls, cartoon, watermark, text, blurry',
-        num_outputs:         numOutputs,
-        num_inference_steps: inferenceSteps,
-        controlnet_1:        'depth',
-        controlnet_1_image:  params.depthMapUrl,
-        controlnet_1_conditioning_scale: depthScale,
-        controlnet_2:        'lineart',
-        controlnet_2_image:  params.lineartUrl,
-        controlnet_2_conditioning_scale: lineartScale,
-        disable_safety_checker: true,
-      },
-    },
-  );
+  let output: unknown;
+  try {
+    output = await client.run(SDXL_MULTI_CONTROLNET_MODEL, { input });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[sdxl-multi-controlnet] Replicate call FAILED:', msg);
+    console.error('[sdxl-multi-controlnet] Input sent:', JSON.stringify(input, null, 2));
+    if (err && typeof err === 'object') {
+      const e = err as Record<string, unknown>;
+      if (e.response) console.error('[sdxl-multi-controlnet] response:', JSON.stringify(e.response));
+      if (e.detail)   console.error('[sdxl-multi-controlnet] detail:',   JSON.stringify(e.detail));
+    }
+    throw new Error(`generateSdxlMultiControlnet: ${msg}`);
+  }
 
   if (!output) throw new Error('generateSdxlMultiControlnet: Replicate returned no output');
 
   const urls = extractUrls(output);
-  if (urls.length === 0) throw new Error('generateSdxlMultiControlnet: no output URLs in response');
+  if (urls.length === 0) {
+    console.error('[sdxl-multi-controlnet] empty URL list, raw output:', JSON.stringify(output).slice(0, 500));
+    throw new Error('generateSdxlMultiControlnet: no output URLs in response');
+  }
 
   console.log('[sdxl-multi-controlnet] Done —', urls.length, 'render(s):', urls[0].slice(0, 70));
   return urls;
