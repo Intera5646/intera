@@ -330,7 +330,29 @@ export async function getPrediction(predictionId: string): Promise<PredictionRes
   const client = getClient();
   const pred = await client.predictions.get(predictionId);
   const status = pred.status as ReplicatePredictionStatus;
-  const urls = status === 'succeeded' ? extractUrls(pred.output) : [];
+
+  let urls: string[] = [];
+  if (status === 'succeeded') {
+    const rawUrls = extractUrls(pred.output);
+
+    // fofr/sdxl-multi-controlnet-lora returns the rendered output(s) FIRST,
+    // followed by preprocessed control images (filenames `control-N.png`).
+    // Strip those out so render_urls only contains real renders.
+    const CONTROL_RE = /\/control-\d+\.png(?:\?.*)?$/i;
+    const filtered = rawUrls.filter(u => !CONTROL_RE.test(u));
+
+    // As a second safety belt, trim to the prediction's declared num_outputs.
+    const input = (pred as { input?: Record<string, unknown> }).input ?? {};
+    const rawN = Number((input as Record<string, unknown>).num_outputs);
+    const n = Number.isFinite(rawN) && rawN > 0 ? Math.floor(rawN) : filtered.length;
+    urls = filtered.slice(0, n);
+
+    console.log(
+      '[sdxl-multi-controlnet] Prediction outputs raw count:', rawUrls.length,
+      ', kept:', urls.length, '(after filtering control maps)',
+    );
+  }
+
   return {
     id:     pred.id,
     status,

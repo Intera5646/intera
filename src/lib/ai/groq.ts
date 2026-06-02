@@ -262,7 +262,21 @@ export async function buildDesignBrief(params: {
       max_tokens: 1800,
       label: 'buildDesignBrief',
     });
-    return JSON.parse(content) as DesignBrief;
+    // Kimi may wrap JSON in prose or ```json fences — scan for the outermost
+    // `{...}` block before parsing.
+    const first = content.indexOf('{');
+    const last  = content.lastIndexOf('}');
+    if (first === -1 || last <= first) {
+      console.warn('[buildDesignBrief] No JSON object in response. Preview:', content.slice(0, 200));
+      throw new Error('No JSON object in design brief response');
+    }
+    const jsonSlice = content.slice(first, last + 1);
+    try {
+      return JSON.parse(jsonSlice) as DesignBrief;
+    } catch (parseErr) {
+      console.warn('[buildDesignBrief] JSON.parse failed on slice. Preview:', jsonSlice.slice(0, 200));
+      throw parseErr;
+    }
   };
 
   try {
