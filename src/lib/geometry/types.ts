@@ -63,6 +63,12 @@ export interface GeometryRoom {
    * still holds the bounding-box width/length for backwards-compat.
    */
   shape?: RoomShape;
+  /**
+   * Optional user-supplied reference photo URL (stored in room-references
+   * bucket). When present, passed to the SDXL render as IP-Adapter image to
+   * transfer style/content cues while depth+lineart lock the geometry.
+   */
+  referencePhotoUrl?: string | null;
 }
 
 /** 2D point in millimetres from the top-left of the room's bounding box. */

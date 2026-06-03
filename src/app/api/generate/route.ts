@@ -926,14 +926,16 @@ async function runBtiRoomV2(opts: {
   });
 
   // Step E: fire SDXL prediction asynchronously — returns prediction ID immediately
-  console.log(`[BTI-v2:${room.name}] Creating SDXL prediction (async)`);
+  const refPhotoUrl = room.referencePhotoUrl ?? null;
+  console.log(`[BTI-v2:${room.name}] Creating SDXL prediction (async)${refPhotoUrl ? ' with IP-Adapter reference photo' : ''}`);
   const predictionId = await generateSdxlMultiControlnet({
-    depthMapUrl: controlMaps.depthMapUrl,
-    lineartUrl:  controlMaps.lineartUrl,
+    depthMapUrl:     controlMaps.depthMapUrl,
+    lineartUrl:      controlMaps.lineartUrl,
     prompt,
     negativePrompt,
-    numOutputs: 1,
-    // depthScale / lineartScale / numInferenceSteps use updated defaults in adapter
+    numOutputs:      1,
+    ipAdapterImage:  refPhotoUrl,
+    // depthScale / lineartScale / numInferenceSteps / ipAdapterWeight use defaults in adapter
   });
   console.log(`[BTI-v2:${room.name}] Prediction queued, id: ${predictionId}`);
 
@@ -946,6 +948,7 @@ async function runBtiRoomV2(opts: {
     depth_map_url:             controlMaps.depthMapUrl,
     sd_prompt:                 prompt,
     replicate_prediction_id:   predictionId,
+    reference_photo_url:       refPhotoUrl,
     created_at:                new Date().toISOString(),
   });
   if (rowErr) {

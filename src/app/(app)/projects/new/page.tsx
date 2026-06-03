@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ApartmentGeometry, FurnitureItem, GeneralPreferences, RoomPreference, RoomShape } from '../../../../lib/geometry/types';
 import { polygonBoundingBoxMm } from '../../../../lib/geometry/polygon';
+import { compressImage } from '../../../../lib/images/compressImage';
 import { createClient } from '@supabase/supabase-js';
 import FloorPlanSVG from '../../../../components/FloorPlanSVG';
 import GeneralPrefs from '../../../../components/GeneralPrefs';
@@ -1262,6 +1263,58 @@ function ConfirmStep({
   type DimKey = 'width_m' | 'length_m';
 
   const [editingShapeIdx, setEditingShapeIdx] = useState<number | null>(null);
+  const [uploadingRef, setUploadingRef] = useState<Record<string, boolean>>({});
+  const [refError, setRefError] = useState<Record<string, string | null>>({});
+
+  // Shared hidden file input for reference photo uploads
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingRefIdx = useRef<number>(-1);
+
+  const handleRefPhotoChange = async (file: File | null) => {
+    const idx = pendingRefIdx.current;
+    if (!file || idx < 0) return;
+    const roomId = geometry.rooms[idx]?.id;
+    if (!roomId) return;
+    setUploadingRef(prev => ({ ...prev, [roomId]: true }));
+    setRefError(prev => ({ ...prev, [roomId]: null }));
+    try {
+      const compressed = await compressImage(file);
+      const path = `ref/${Date.now()}-${roomId}.jpg`;
+      const { error: uploadErr } = await supabase.storage
+        .from('room-references')
+        .upload(path, compressed, { contentType: 'image/jpeg', upsert: true });
+      if (uploadErr) throw uploadErr;
+      const { data: pub } = supabase.storage.from('room-references').getPublicUrl(path);
+      const url = pub?.publicUrl ?? '';
+      const rooms = geometry.rooms.map((r, i) =>
+        i === idx ? { ...r, referencePhotoUrl: url } : r
+      );
+      onChange({ ...geometry, rooms });
+    } catch (err) {
+      console.error('[ref-photo] Upload failed:', err);
+      setRefError(prev => ({
+        ...prev,
+        [roomId]: 'Не удалось загрузить фото. Попробуйте другой файл.',
+      }));
+    } finally {
+      setUploadingRef(prev => ({ ...prev, [roomId]: false }));
+    }
+  };
+
+  const triggerRefUpload = (idx: number) => {
+    pendingRefIdx.current = idx;
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const removeRefPhoto = (idx: number) => {
+    const rooms = geometry.rooms.map((r, i) =>
+      i === idx ? { ...r, referencePhotoUrl: null } : r
+    );
+    onChange({ ...geometry, rooms });
+  };
 
   const updateName = (idx: number, name: string) => {
     const rooms = geometry.rooms.map((r, i) => i === idx ? { ...r, name } : r);
@@ -1457,9 +1510,77 @@ function ConfirmStep({
             >
               {room.shape?.kind === 'polygon' ? '✏ Форма: сложная' : '✏ Настроить форму'}
             </button>
+
+            {/* Reference photo */}
+            <div style={{ borderTop: '1px solid rgba(34,30,26,0.08)', paddingTop: 10 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>
+                Референс-фото <span style={{ opacity: 0.6 }}>(необязательно)</span>
+              </div>
+              {room.referencePhotoUrl ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <img
+                    src={room.referencePhotoUrl}
+                    alt="референс"
+                    style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8, border: '1px solid rgba(34,30,26,0.12)', flexShrink: 0 }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginBottom: 6 }}>
+                      Это фото будет ориентиром для стиля комнаты
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeRefPhoto(idx)}
+                      style={{
+                        fontSize: 11, color: '#B14A3F', background: 'none',
+                        border: '1px solid rgba(177,74,63,0.3)', borderRadius: 6,
+                        padding: '3px 8px', cursor: 'pointer',
+                      }}
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => triggerRefUpload(idx)}
+                  disabled={uploadingRef[room.id] === true}
+                  style={{
+                    width: '100%', height: 48, borderRadius: 10,
+                    border: '1.5px dashed rgba(34,30,26,0.25)',
+                    background: 'transparent', color: 'var(--muted)',
+                    fontSize: 13, cursor: uploadingRef[room.id] ? 'wait' : 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    opacity: uploadingRef[room.id] ? 0.6 : 1,
+                  }}
+                >
+                  {uploadingRef[room.id]
+                    ? <><span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(34,30,26,0.3)', borderTopColor: 'var(--ink)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />Загрузка...</>
+                    : <>📷 Добавить фото-референс</>
+                  }
+                </button>
+              )}
+              {refError[room.id] && (
+                <div style={{ fontSize: 11, color: '#B14A3F', marginTop: 4 }}>
+                  {refError[room.id]}
+                </div>
+              )}
+            </div>
           </div>
         ))}
       </div>
+
+      {/* Hidden shared file input for reference photo uploads */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0] ?? null;
+          void handleRefPhotoChange(file);
+        }}
+      />
 
       {geometry.rooms.length === 0 && (
         <div style={{ fontSize: 13, color: 'var(--muted)', padding: '16px', borderRadius: 14, border: '1px dashed rgba(34,30,26,0.2)', textAlign: 'center' }}>

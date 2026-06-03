@@ -247,10 +247,14 @@ export type SdxlMultiControlnetParams = {
   negativePrompt?: string;
   numOutputs?: 1 | 2 | 4;
   numInferenceSteps?: number;
-  /** ControlNet conditioning scale for depth (default 0.8) */
+  /** ControlNet conditioning scale for depth (default 0.7) */
   depthScale?: number;
-  /** ControlNet conditioning scale for lineart (default 0.6) */
+  /** ControlNet conditioning scale for lineart (default 0.4) */
   lineartScale?: number;
+  /** Optional reference photo URL fed as IP-Adapter image (style transfer) */
+  ipAdapterImage?: string | null;
+  /** IP-Adapter conditioning weight — default 0.7 */
+  ipAdapterWeight?: number;
 };
 
 export async function generateSdxlMultiControlnet(
@@ -262,8 +266,10 @@ export async function generateSdxlMultiControlnet(
   const inferenceSteps   = params.numInferenceSteps  ?? 40;
   const depthScale       = params.depthScale         ?? 0.7;
   const lineartScale     = params.lineartScale       ?? 0.4;
+  const ipAdapterWeight  = params.ipAdapterWeight    ?? 0.7;
+  const hasIpAdapter     = Boolean(params.ipAdapterImage);
 
-  const input = {
+  const input: Record<string, unknown> = {
     prompt:                            params.prompt,
     negative_prompt:                   params.negativePrompt ?? 'bad geometry, distorted walls, unrealistic proportions, warped perspective, blurry, low quality, cartoon, watermark, text, sparse furniture, empty room, minimal styling, bare walls, cluttered, messy, CGI plastic look, harsh fluorescent lighting, oversaturated colors',
     num_outputs:                       numOutputs,
@@ -279,6 +285,11 @@ export async function generateSdxlMultiControlnet(
     controlnet_2_conditioning_scale:   lineartScale,
     controlnet_2_start:                0.0,
     controlnet_2_end:                  1.0,
+    // IP-Adapter — only included when a reference photo is provided
+    ...(hasIpAdapter ? {
+      ip_adapter_image:  params.ipAdapterImage,
+      ip_adapter_weight: ipAdapterWeight,
+    } : {}),
   };
 
   console.log(
@@ -286,6 +297,7 @@ export async function generateSdxlMultiControlnet(
     'outputs:', numOutputs,
     '| depth_scale:', depthScale,
     '| lineart_scale:', lineartScale,
+    `| ip_adapter: ${hasIpAdapter ? `yes (weight ${ipAdapterWeight})` : 'no'}`,
     '| depth:', params.depthMapUrl.slice(0, 70),
     '| lineart:', params.lineartUrl.slice(0, 70),
   );
