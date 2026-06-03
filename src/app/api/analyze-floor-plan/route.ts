@@ -191,6 +191,12 @@ For every enclosed space clearly bounded by walls:
 - Note door openings with their printed width in mm
 - Note wall thickness: thick hatched lines = external/load-bearing, thin single lines = partition walls
 
+For each window and door opening, SPECIFY WHICH WALL IT IS ON:
+  - Describe the wall as: top wall / bottom wall / left wall / right wall (as the room appears on the plan)
+  - Give the approximate distance from the left corner of that wall to the start of the opening (in mm)
+  - Example: "window on top wall, starts 800mm from left corner, width 1200mm"
+  - Example: "door on bottom wall, starts 300mm from left corner, width 900mm, leads to corridor"
+
 For each space, also describe its overall SHAPE:
 - If the room is a clean rectangle with straight walls on all 4 sides, say
   'shape: rectangle' and give just width × length.
@@ -239,13 +245,44 @@ Return ONLY this JSON structure:
       "shape": {
         "kind": "rectangle"
       },
-      "openings": [
-        { "kind": "door", "width_mm": <number> },
-        { "kind": "window", "width_mm": <number> }
+      "walls": [
+        {
+          "id": "W1",
+          "length_m": <length of this wall in metres>,
+          "features": [
+            { "type": "window", "position_from_start_m": 0.8, "width_m": 1.2 }
+          ]
+        },
+        { "id": "W2", "length_m": <length>, "features": [] },
+        {
+          "id": "W3",
+          "length_m": <length>,
+          "features": [
+            { "type": "door", "position_from_start_m": 0.3, "width_m": 0.9 }
+          ]
+        },
+        { "id": "W4", "length_m": <length>, "features": [] }
       ]
     }
   ]
 }
+
+WALL CONVENTION — use this system for every room:
+- W1 = the wall with the MOST or LARGEST windows (usually the exterior / outer wall).
+       Position it as the back wall. Length = the physical span of that wall in metres.
+- W2 = right wall when standing inside and facing W1. Length = perpendicular span.
+- W3 = the wall opposite W1 (interior / corridor side). Usually has the entry door. Length same as W1.
+- W4 = left wall when facing W1. Length same as W2.
+- If no windows exist, assign W1 to the longest exterior wall or any dominant wall.
+- Every room MUST have exactly 4 walls: W1, W2, W3, W4.
+- At least ONE door feature must appear in W3 (or W2/W4 if topology requires).
+
+FEATURES in walls:
+- type: "window" or "door"
+- position_from_start_m: distance in metres from the LEFT corner of that wall (when facing the wall from inside)
+- width_m: width of the opening in metres
+- For features described in mm in the analysis, convert to metres (e.g. 900mm → 0.9)
+- If a position is not mentioned, distribute evenly (e.g. a single opening: position = (wall_length - opening_width) / 2)
 
 For NON-rectangular rooms, replace the "shape" field with:
   "shape": {
@@ -639,6 +676,12 @@ function parseAnalysisResponse(content: string): AnalysisResult | null {
 
 // ── Step 2 response parser ────────────────────────────────────────────────────
 
+interface Step2RoomWall {
+  id: string;
+  length_m: number;
+  features: Array<{ type: string; position_from_start_m: number; width_m: number }>;
+}
+
 interface Step2Room {
   id: string;
   label: string;
@@ -646,6 +689,7 @@ interface Step2Room {
   width_m: number;
   length_m: number;
   shape: RoomShape;
+  walls?: Step2RoomWall[];
 }
 
 interface Step2Data {
@@ -683,6 +727,35 @@ function parseStep2Response(rawJson: string): Step2Data | null {
         if (bboxL > 0.5 && (length_m < 0.5 || length_m > 30)) length_m = bboxL;
       }
 
+      // Parse walls if model returned them
+      let walls: Step2RoomWall[] | undefined;
+      if (Array.isArray(room.walls) && room.walls.length > 0) {
+        walls = (room.walls as unknown[]).slice(0, 4).map((w: unknown) => {
+          const wall = (w ?? {}) as Record<string, unknown>;
+          const rawFeatures = Array.isArray(wall.features) ? wall.features : [];
+          const features = (rawFeatures as unknown[]).slice(0, 8).map((f: unknown) => {
+            const feat = (f ?? {}) as Record<string, unknown>;
+            const featType = String(feat.type ?? '') === 'door' ? 'door' : 'window';
+            const pos = Number(feat.position_from_start_m ?? feat.position ?? 0);
+            const w_m = Number(feat.width_m ?? feat.width ?? (featType === 'door' ? 0.9 : 1.2));
+            return {
+              type: featType,
+              position_from_start_m: Number.isFinite(pos) ? Math.max(0, pos) : 0,
+              width_m: Number.isFinite(w_m) && w_m > 0 ? Math.min(w_m, 5) : (featType === 'door' ? 0.9 : 1.2),
+            };
+          });
+          const wallLen = Number(wall.length_m ?? wall.length ?? 3);
+          return {
+            id: String(wall.id ?? 'W1'),
+            length_m: Number.isFinite(wallLen) && wallLen > 0 ? Math.min(wallLen, 30) : 3,
+            features,
+          };
+        });
+        const windowCount = walls.flatMap(w => w.features).filter(f => f.type === 'window').length;
+        const doorCount   = walls.flatMap(w => w.features).filter(f => f.type === 'door').length;
+        console.log(`[analyze:step2:walls] room ${idx + 1}: ${walls.length} walls, ${windowCount} windows, ${doorCount} doors`);
+      }
+
       return {
         id:        String(room.id    ?? `room_${idx + 1}`),
         label:     String(room.label ?? `Помещение ${idx + 1}`),
@@ -690,6 +763,7 @@ function parseStep2Response(rawJson: string): Step2Data | null {
         width_m:   clampDim(width_m,  0.5, 20),
         length_m:  clampDim(length_m, 0.5, 20),
         shape,
+        walls,
       };
     });
 
@@ -803,7 +877,9 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
   }
   console.log('[analyze:step2:rooms_found]', parsedData.total_spaces);
 
-  // ── Build GeometryRooms from Step 2 data (walls generated from defaults) ──
+  // ── Build GeometryRooms from Step 2 data ──────────────────────────────────
+  const OPPOSITE_WALL: Record<string, string> = { W1: 'W3', W3: 'W1', W2: 'W4', W4: 'W2' };
+
   const geometryRooms: GeometryRoom[] = parsedData.rooms.map((r, idx) => {
     const type: RoomType = 'unknown';
     const width_m  = r.width_m  || 3.0;
@@ -811,8 +887,35 @@ async function analyzeWithOpenRouter(base64DataUrl: string, apiKey: string): Pro
     const height_m = 2.7;
     const size_category = toSizeCategory(undefined, width_m, length_m);
     const num_photos_needed: 1 | 2 = width_m * length_m >= 15 ? 2 : 1;
-    const walls = buildDefaultWalls(width_m, length_m);
-    const suggested_cameras = buildDefaultCameras(type, num_photos_needed);
+
+    // Use parsed walls if available, otherwise build defaults
+    const walls = r.walls
+      ? parseRoomWalls(r.walls, width_m, length_m)
+      : buildDefaultWalls(width_m, length_m);
+
+    // Derive camera: place on wall OPPOSITE to the wall with most window area
+    const lightWall = walls.reduce<{ id: string; totalM: number } | null>((best, w) => {
+      const totalM = w.features
+        .filter(f => f.type === 'window')
+        .reduce((s, f) => s + f.width_m, 0);
+      return totalM > (best?.totalM ?? 0) ? { id: w.id, totalM } : best;
+    }, null);
+
+    let suggested_cameras: CameraSuggestion[];
+    if (lightWall && lightWall.totalM > 0) {
+      const camWall = OPPOSITE_WALL[lightWall.id] ?? 'W3';
+      console.log(`[analyze:cameras] room ${idx + 1}: light wall ${lightWall.id} (${lightWall.totalM.toFixed(1)}m) → camera on ${camWall}`);
+      suggested_cameras = [
+        { camera_at_wall_id: camWall, facing_wall_id: lightWall.id, description: `Facing light wall ${lightWall.id}` },
+      ];
+      if (num_photos_needed === 2) {
+        const second = ['W1', 'W3'].includes(lightWall.id) ? 'W4' : 'W3';
+        const secondFacing = ['W1', 'W3'].includes(lightWall.id) ? 'W2' : 'W1';
+        suggested_cameras.push({ camera_at_wall_id: second, facing_wall_id: secondFacing, description: 'Secondary angle' });
+      }
+    } else {
+      suggested_cameras = buildDefaultCameras(type, num_photos_needed);
+    }
 
     void idx;
     return {

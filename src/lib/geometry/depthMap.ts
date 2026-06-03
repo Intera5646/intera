@@ -429,11 +429,14 @@ function castRay(
   furnitureBoxes: FurnitureAABB[],
   fallback: number,
   polyScene: PolygonScene | null = null,
+  openings: WallOpening[] = [],
 ): number {
   let minT = fallback;
 
   if (polyScene) {
     // Polygon path: N wall segments + floor/ceiling clipped to polygon outline.
+    // Opening checks not applied to polygon walls (arbitrary angles) — openings are
+    // sparse enough that skipping them here is a minor approximation.
     for (const [x1, z1, x2, z2] of polyScene.walls) {
       const t = segmentRayHit(ox, oy, oz, dx, dy, dz, x1, z1, x2, z2, H);
       if (t < minT) minT = t;
@@ -453,13 +456,16 @@ function castRay(
       }
     }
   } else {
-    // Rectangle path: original axis-aligned plane intersections.
+    // Rectangle path: axis-aligned plane intersections.
+    // Wall hits that fall inside a window or door opening are skipped so the ray
+    // passes through → Infinity (sky/exterior) in the depth map, matching the
+    // semantic render where openings are colored as sky blue / transparent.
     { const t = planeT(oy, dy, 0); if (t < minT) { const hx=ox+dx*t,hz=oz+dz*t; if (hx>=0&&hx<=W&&hz>=0&&hz<=L) minT=t; } }
     { const t = planeT(oy, dy, H); if (t < minT) { const hx=ox+dx*t,hz=oz+dz*t; if (hx>=0&&hx<=W&&hz>=0&&hz<=L) minT=t; } }
-    { const t = planeT(oz, dz, 0); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H) minT=t; } }
-    { const t = planeT(oz, dz, L); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H) minT=t; } }
-    { const t = planeT(ox, dx, 0); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H) minT=t; } }
-    { const t = planeT(ox, dx, W); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H) minT=t; } }
+    { const t = planeT(oz, dz, 0); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H&&!openingTypeAt(openings,2,0,hx,hy,0)) minT=t; } }
+    { const t = planeT(oz, dz, L); if (t < minT) { const hx=ox+dx*t,hy=oy+dy*t; if (hx>=0&&hx<=W&&hy>=0&&hy<=H&&!openingTypeAt(openings,2,L,hx,hy,L)) minT=t; } }
+    { const t = planeT(ox, dx, 0); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H&&!openingTypeAt(openings,0,0,0,hy,hz)) minT=t; } }
+    { const t = planeT(ox, dx, W); if (t < minT) { const hy=oy+dy*t,hz=oz+dz*t; if (hz>=0&&hz<=L&&hy>=0&&hy<=H&&!openingTypeAt(openings,0,W,W,hy,hz)) minT=t; } }
   }
 
   for (const box of furnitureBoxes) {
@@ -498,8 +504,9 @@ export async function generateDepthBuffer(
   const camIndex = options?.cameraIndex ?? 0;
 
   const scene = buildScene(room, camIndex);
-  const { width_m: W, length_m: L, height_m: H, camera: cam } = scene;
+  const { width_m: W, length_m: L, height_m: H, camera: cam, openings } = scene;
   const polyScene = buildPolygonScene(room);
+  console.log(`[depth-map] ${room.name}: camera=${JSON.stringify({x:cam.x.toFixed(2),z:cam.z.toFixed(2)})}, openings=${openings.length}`);
 
   const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
     .map(f => furnitureToAABB(f, W, L))
@@ -514,7 +521,7 @@ export async function generateDepthBuffer(
   for (let py = 0; py < imgH; py++) {
     for (let px = 0; px < imgW; px++) {
       const [dx, dy, dz] = makeRayDir(px, py, imgW, imgH, aspect, tanHalf, cam);
-      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity, polyScene);
+      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity, polyScene, openings);
       rawBuf[py * imgW + px] =
         t === Infinity ? 0 : Math.round(255 * Math.max(0, 1 - t / maxDist));
     }
@@ -540,7 +547,7 @@ export async function generateLineartBuffer(
   const camIndex = options?.cameraIndex ?? 0;
 
   const scene = buildScene(room, camIndex);
-  const { width_m: W, length_m: L, height_m: H, camera: cam } = scene;
+  const { width_m: W, length_m: L, height_m: H, camera: cam, openings } = scene;
   const polyScene = buildPolygonScene(room);
 
   const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
@@ -556,7 +563,7 @@ export async function generateLineartBuffer(
   for (let py = 0; py < imgH; py++) {
     for (let px = 0; px < imgW; px++) {
       const [dx, dy, dz] = makeRayDir(px, py, imgW, imgH, aspect, tanHalf, cam);
-      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity, polyScene);
+      const t = castRay(cam.x, cam.y, cam.z, dx, dy, dz, W, L, H, furnitureBoxes, Infinity, polyScene, openings);
       depth[py * imgW + px] = t === Infinity ? 1.0 : Math.min(1, t / maxDist);
     }
   }

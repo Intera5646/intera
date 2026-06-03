@@ -872,56 +872,85 @@ const MANDATORY_FURNITURE: Record<string, string> = {
 
 const FALLBACK_FURNITURE: Record<string, FurnitureObject[]> = {
   living: [
-    { id: 'F1', type: 'sofa',       anchorWallId: 'W1', positionAlongWall: 0.10, widthM: 2.1, depthM: 0.90, heightM: 0.85 },
-    { id: 'F2', type: 'tv_unit',    anchorWallId: 'W4', positionAlongWall: 0.30, widthM: 1.4, depthM: 0.45, heightM: 0.50 },
-    { id: 'F3', type: 'shelving',   anchorWallId: 'W2', positionAlongWall: 0.50, widthM: 0.8, depthM: 0.30, heightM: 2.00 },
+    { id: 'F1',  type: 'sofa',          anchorWallId: 'W1', positionAlongWall: 0.10, widthM: 2.1,  depthM: 0.90, heightM: 0.85 },
+    { id: 'F2',  type: 'coffee_table',  anchorWallId: 'W1', positionAlongWall: 0.25, widthM: 1.2,  depthM: 0.60, heightM: 0.45 },
+    { id: 'F3',  type: 'tv_unit',       anchorWallId: 'W4', positionAlongWall: 0.20, widthM: 1.6,  depthM: 0.45, heightM: 0.50 },
+    { id: 'F4',  type: 'accent_chair',  anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 0.75, depthM: 0.75, heightM: 0.85 },
+    { id: 'F5',  type: 'shelving',      anchorWallId: 'W2', positionAlongWall: 0.55, widthM: 0.90, depthM: 0.30, heightM: 2.10 },
+    { id: 'F6',  type: 'floor_lamp',    anchorWallId: 'W2', positionAlongWall: 0.05, widthM: 0.30, depthM: 0.30, heightM: 1.60 },
+    { id: 'F7',  type: 'side_table',    anchorWallId: 'W1', positionAlongWall: 0.05, widthM: 0.45, depthM: 0.45, heightM: 0.55 },
+    { id: 'F8',  type: 'area_rug',      anchorWallId: 'W1', positionAlongWall: 0.08, widthM: 2.4,  depthM: 2.00, heightM: 0.02 },
+    { id: 'F9',  type: 'plant',         anchorWallId: 'W4', positionAlongWall: 0.05, widthM: 0.40, depthM: 0.40, heightM: 1.20 },
+    { id: 'F10', type: 'console_table', anchorWallId: 'W4', positionAlongWall: 0.65, widthM: 0.90, depthM: 0.35, heightM: 0.85 },
   ],
   bedroom: [
-    { id: 'F1', type: 'bed',        anchorWallId: 'W1', positionAlongWall: 0.20, widthM: 1.6, depthM: 2.00, heightM: 0.55 },
-    { id: 'F2', type: 'nightstand', anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 0.5, depthM: 0.45, heightM: 0.55 },
-    { id: 'F3', type: 'wardrobe',   anchorWallId: 'W2', positionAlongWall: 0.60, widthM: 1.2, depthM: 0.60, heightM: 2.20 },
+    { id: 'F1',  type: 'bed',           anchorWallId: 'W1', positionAlongWall: 0.18, widthM: 1.6,  depthM: 2.00, heightM: 0.55 },
+    { id: 'F2',  type: 'nightstand',    anchorWallId: 'W1', positionAlongWall: 0.08, widthM: 0.50, depthM: 0.45, heightM: 0.55 },
+    { id: 'F3',  type: 'nightstand',    anchorWallId: 'W1', positionAlongWall: 0.72, widthM: 0.50, depthM: 0.45, heightM: 0.55 },
+    { id: 'F4',  type: 'wardrobe',      anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 1.4,  depthM: 0.60, heightM: 2.20 },
+    { id: 'F5',  type: 'wardrobe',      anchorWallId: 'W4', positionAlongWall: 0.10, widthM: 1.0,  depthM: 0.60, heightM: 2.20 },
+    { id: 'F6',  type: 'accent_chair',  anchorWallId: 'W2', positionAlongWall: 0.70, widthM: 0.70, depthM: 0.70, heightM: 0.85 },
+    { id: 'F7',  type: 'table_lamp',    anchorWallId: 'W1', positionAlongWall: 0.09, widthM: 0.25, depthM: 0.25, heightM: 0.55 },
+    { id: 'F8',  type: 'table_lamp',    anchorWallId: 'W1', positionAlongWall: 0.72, widthM: 0.25, depthM: 0.25, heightM: 0.55 },
+    { id: 'F9',  type: 'area_rug',      anchorWallId: 'W1', positionAlongWall: 0.15, widthM: 1.8,  depthM: 2.20, heightM: 0.02 },
+    { id: 'F10', type: 'plant',         anchorWallId: 'W4', positionAlongWall: 0.05, widthM: 0.35, depthM: 0.35, heightM: 1.10 },
   ],
   kitchen: [
-    // Work sequence along W1: fridge → sink → stove, with a base run + wall cabinets
-    { id: 'F1', type: 'kitchen_run',    anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 3.2,  depthM: 0.60, heightM: 0.90 },
-    { id: 'F2', type: 'fridge',         anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
-    { id: 'F3', type: 'sink_kitchen',   anchorWallId: 'W1', positionAlongWall: 0.45, widthM: 0.80, depthM: 0.60, heightM: 0.90 },
-    { id: 'F4', type: 'stove',          anchorWallId: 'W1', positionAlongWall: 0.75, widthM: 0.60, depthM: 0.60, heightM: 0.90 },
-    { id: 'F5', type: 'upper_cabinets', anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 3.2,  depthM: 0.35, heightM: 0.70, yOffsetM: 1.5 },
+    { id: 'F1',  type: 'kitchen_run',    anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 3.2,  depthM: 0.60, heightM: 0.90 },
+    { id: 'F2',  type: 'fridge',         anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
+    { id: 'F3',  type: 'sink_kitchen',   anchorWallId: 'W1', positionAlongWall: 0.40, widthM: 0.80, depthM: 0.60, heightM: 0.90 },
+    { id: 'F4',  type: 'stove',          anchorWallId: 'W1', positionAlongWall: 0.72, widthM: 0.60, depthM: 0.60, heightM: 0.90 },
+    { id: 'F5',  type: 'upper_cabinets', anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 3.2,  depthM: 0.35, heightM: 0.70, yOffsetM: 1.5 },
+    { id: 'F6',  type: 'dining_table',   anchorWallId: 'W4', positionAlongWall: 0.20, widthM: 1.2,  depthM: 0.80, heightM: 0.76 },
+    { id: 'F7',  type: 'dining_chair',   anchorWallId: 'W4', positionAlongWall: 0.15, widthM: 0.45, depthM: 0.45, heightM: 0.85 },
+    { id: 'F8',  type: 'dining_chair',   anchorWallId: 'W4', positionAlongWall: 0.55, widthM: 0.45, depthM: 0.45, heightM: 0.85 },
   ],
   bathroom: [
-    { id: 'F1', type: 'bathtub',     anchorWallId: 'W1', positionAlongWall: 0.05, widthM: 1.70, depthM: 0.75, heightM: 0.60 },
-    { id: 'F2', type: 'vanity_sink', anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 0.85, depthM: 0.55, heightM: 0.85 },
-    { id: 'F3', type: 'toilet',      anchorWallId: 'W4', positionAlongWall: 0.10, widthM: 0.40, depthM: 0.65, heightM: 0.80 },
+    { id: 'F1',  type: 'bathtub',        anchorWallId: 'W1', positionAlongWall: 0.05, widthM: 1.70, depthM: 0.75, heightM: 0.60 },
+    { id: 'F2',  type: 'vanity_sink',    anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 0.85, depthM: 0.55, heightM: 0.85 },
+    { id: 'F3',  type: 'toilet',         anchorWallId: 'W4', positionAlongWall: 0.10, widthM: 0.40, depthM: 0.65, heightM: 0.80 },
+    { id: 'F4',  type: 'shelving',       anchorWallId: 'W2', positionAlongWall: 0.65, widthM: 0.50, depthM: 0.20, heightM: 1.80, yOffsetM: 0.9 },
+    { id: 'F5',  type: 'table_lamp',     anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 0.20, depthM: 0.20, heightM: 0.50 },
   ],
   wc: [
-    { id: 'F1', type: 'toilet',      anchorWallId: 'W1', positionAlongWall: 0.30, widthM: 0.40, depthM: 0.65, heightM: 0.80 },
-    { id: 'F2', type: 'corner_sink', anchorWallId: 'W4', positionAlongWall: 0.05, widthM: 0.40, depthM: 0.40, heightM: 0.80 },
+    { id: 'F1',  type: 'toilet',         anchorWallId: 'W1', positionAlongWall: 0.28, widthM: 0.40, depthM: 0.65, heightM: 0.80 },
+    { id: 'F2',  type: 'corner_sink',    anchorWallId: 'W4', positionAlongWall: 0.05, widthM: 0.40, depthM: 0.40, heightM: 0.80 },
+    { id: 'F3',  type: 'shelving',       anchorWallId: 'W2', positionAlongWall: 0.20, widthM: 0.50, depthM: 0.15, heightM: 1.60, yOffsetM: 0.8 },
   ],
   hallway: [
-    { id: 'F1', type: 'wardrobe',       anchorWallId: 'W2', positionAlongWall: 0.20, widthM: 1.2, depthM: 0.55, heightM: 2.20 },
-    { id: 'F2', type: 'console_table',  anchorWallId: 'W4', positionAlongWall: 0.30, widthM: 0.8, depthM: 0.35, heightM: 0.85 },
+    { id: 'F1',  type: 'wardrobe',       anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 1.4,  depthM: 0.55, heightM: 2.20 },
+    { id: 'F2',  type: 'console_table',  anchorWallId: 'W4', positionAlongWall: 0.20, widthM: 0.90, depthM: 0.35, heightM: 0.85 },
+    { id: 'F3',  type: 'shelving',       anchorWallId: 'W4', positionAlongWall: 0.72, widthM: 0.60, depthM: 0.25, heightM: 2.00 },
+    { id: 'F4',  type: 'plant',          anchorWallId: 'W4', positionAlongWall: 0.65, widthM: 0.35, depthM: 0.35, heightM: 1.00 },
   ],
   balcony: [
-    { id: 'F1', type: 'bistro_table', anchorWallId: 'W1', positionAlongWall: 0.30, widthM: 0.7, depthM: 0.70, heightM: 0.75 },
+    { id: 'F1',  type: 'bistro_table',   anchorWallId: 'W1', positionAlongWall: 0.25, widthM: 0.70, depthM: 0.70, heightM: 0.75 },
+    { id: 'F2',  type: 'accent_chair',   anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 0.60, depthM: 0.60, heightM: 0.80 },
+    { id: 'F3',  type: 'plant',          anchorWallId: 'W4', positionAlongWall: 0.05, widthM: 0.40, depthM: 0.40, heightM: 1.00 },
   ],
   storage: [
-    { id: 'F1', type: 'shelving', anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 2.5, depthM: 0.40, heightM: 2.20 },
-    { id: 'F2', type: 'shelving', anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 1.2, depthM: 0.40, heightM: 2.20 },
+    { id: 'F1',  type: 'shelving',       anchorWallId: 'W1', positionAlongWall: 0.00, widthM: 2.5,  depthM: 0.40, heightM: 2.20 },
+    { id: 'F2',  type: 'shelving',       anchorWallId: 'W2', positionAlongWall: 0.10, widthM: 1.2,  depthM: 0.40, heightM: 2.20 },
+    { id: 'F3',  type: 'shelving',       anchorWallId: 'W4', positionAlongWall: 0.10, widthM: 1.0,  depthM: 0.40, heightM: 2.20 },
   ],
   studio_zone: [
-    { id: 'F1', type: 'sofa',         anchorWallId: 'W1', positionAlongWall: 0.10, widthM: 2.1,  depthM: 0.90, heightM: 0.85 },
-    { id: 'F2', type: 'kitchen_run',  anchorWallId: 'W2', positionAlongWall: 0.00, widthM: 2.5,  depthM: 0.60, heightM: 0.90 },
-    { id: 'F3', type: 'fridge',       anchorWallId: 'W2', positionAlongWall: 0.00, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
-    { id: 'F4', type: 'sink_kitchen', anchorWallId: 'W2', positionAlongWall: 0.45, widthM: 0.80, depthM: 0.60, heightM: 0.90 },
-    { id: 'F5', type: 'stove',        anchorWallId: 'W2', positionAlongWall: 0.75, widthM: 0.60, depthM: 0.60, heightM: 0.90 },
+    { id: 'F1',  type: 'sofa',           anchorWallId: 'W1', positionAlongWall: 0.10, widthM: 2.1,  depthM: 0.90, heightM: 0.85 },
+    { id: 'F2',  type: 'coffee_table',   anchorWallId: 'W1', positionAlongWall: 0.25, widthM: 1.2,  depthM: 0.60, heightM: 0.45 },
+    { id: 'F3',  type: 'kitchen_run',    anchorWallId: 'W2', positionAlongWall: 0.00, widthM: 2.5,  depthM: 0.60, heightM: 0.90 },
+    { id: 'F4',  type: 'fridge',         anchorWallId: 'W2', positionAlongWall: 0.00, widthM: 0.65, depthM: 0.65, heightM: 1.85 },
+    { id: 'F5',  type: 'sink_kitchen',   anchorWallId: 'W2', positionAlongWall: 0.40, widthM: 0.80, depthM: 0.60, heightM: 0.90 },
+    { id: 'F6',  type: 'stove',          anchorWallId: 'W2', positionAlongWall: 0.72, widthM: 0.60, depthM: 0.60, heightM: 0.90 },
+    { id: 'F7',  type: 'upper_cabinets', anchorWallId: 'W2', positionAlongWall: 0.00, widthM: 2.5,  depthM: 0.35, heightM: 0.70, yOffsetM: 1.5 },
+    { id: 'F8',  type: 'dining_table',   anchorWallId: 'W4', positionAlongWall: 0.20, widthM: 1.0,  depthM: 0.80, heightM: 0.76 },
+    { id: 'F9',  type: 'floor_lamp',     anchorWallId: 'W1', positionAlongWall: 0.05, widthM: 0.30, depthM: 0.30, heightM: 1.60 },
+    { id: 'F10', type: 'area_rug',       anchorWallId: 'W1', positionAlongWall: 0.08, widthM: 2.2,  depthM: 1.80, heightM: 0.02 },
   ],
 };
 
 function validateFurnitureResponse(raw: unknown, room: GeometryRoom): FurnitureObject[] {
   const { width_m: W, length_m: L } = room.dimensions;
   if (!Array.isArray(raw)) return [];
-  return (raw as unknown[]).slice(0, 12).flatMap((item: unknown, idx) => {
+  return (raw as unknown[]).slice(0, 20).flatMap((item: unknown, idx) => {
     const f = (item ?? {}) as Record<string, unknown>;
     const wallId = String(f.anchorWallId ?? '');
     if (!['W1', 'W2', 'W3', 'W4'].includes(wallId)) return [];
@@ -963,22 +992,43 @@ export async function buildRoomFurniturePlan(
     return `  ${wall.id} (${wall.length_m.toFixed(1)}m): ${featDesc}`;
   }).join('\n');
 
+  // Extract openings summary for clearance rules
+  const windowsAndDoors = room.walls.flatMap(wall =>
+    wall.features.map(f =>
+      `${f.type} on ${wall.id} at ${f.position_from_start_m.toFixed(1)}m, width ${f.width_m.toFixed(1)}m`
+    )
+  ).join('; ') || 'none detected';
+
   const mandatory = MANDATORY_FURNITURE[room.type] ?? 'appropriate furniture for this room type';
   const camWall = room.suggested_cameras[0]?.camera_at_wall_id ?? 'W3';
   const focalPoint = designVision?.perRoomFocalPoints[room.id];
 
-  const designerPrinciples =
-    `DESIGNER PRINCIPLES (follow these in order):\n` +
-    `1. ANCHOR PIECE: Identify the primary piece for this room type (bed for bedroom, sofa for living, dining table for kitchen-living, vanity for bath). Place it against or facing the focal wall (W1 = back wall), not against ${camWall}.\n` +
-    `2. FUNCTION ZONES: Identify 2-3 activity zones (e.g. sleeping + dressing + reading). Each zone gets 1-3 items that relate spatially.\n` +
-    `3. SIGHT LINE: From the entrance (${camWall}), the first visible element should be the anchor piece facing you, NOT the side of a sofa or the foot of a bed.\n` +
-    `4. ASYMMETRIC BALANCE: Pair a tall vertical element (wardrobe, shelving, floor lamp) on one side with a wide low element (tv_unit, coffee_table) on the other side. Avoid mirror-image symmetry.\n` +
-    `5. CIRCULATION: Minimum 700mm clear path between every pair of furniture zones. Check door openings — keep 900mm clear in front of each door.\n` +
-    `6. LAYERING: Every anchor zone needs: an implied area rug (show as a low, wide, flat piece if needed), plus at least one accent piece (a lamp at nightstand height, a small shelf for ceramics).\n` +
-    `7. STATEMENT: Include exactly ONE statement piece — either an oversized shelving unit, a sculptural console, a distinctive accent chair, or an unusually proportioned table. Not one of every category.\n`;
+  // Find the light wall (most windows) for ORIENT step
+  const lightWall = room.walls.reduce<{ id: string; totalM: number } | null>((best, w) => {
+    const totalM = w.features.filter(f => f.type === 'window').reduce((s, f) => s + f.width_m, 0);
+    return totalM > (best?.totalM ?? 0) ? { id: w.id, totalM } : best;
+  }, null);
+  const lightWallId = lightWall?.totalM ? lightWall.id : 'W1';
+
+  const protocol =
+    `DESIGN PROTOCOL — follow these 5 steps in order:\n\n` +
+    `STEP 1 — ORIENT: Light wall is ${lightWallId} (windows face here). ` +
+    `Camera is on ${camWall} (opposite). ` +
+    `All furniture must face or be parallel to the light wall — NEVER turn backs to the windows.\n\n` +
+    `STEP 2 — ANCHOR: Place the PRIMARY piece for this room type against or facing ${lightWallId}. ` +
+    `(bed for bedroom, sofa for living, dining table for kitchen-living, work counter for kitchen, vanity for bathroom). ` +
+    `Centre it or offset ≤ 20% from centre. This is the most important piece — make it prominent.\n\n` +
+    `STEP 3 — SUPPORT: Add 2-4 supporting pieces that cluster around the anchor. ` +
+    `(nightstands flanking bed, coffee table in front of sofa, accent chairs at 45°, side tables). ` +
+    `Each zone gets 2-3 related items. Include at least ONE tall vertical piece (wardrobe, shelving, floor lamp).\n\n` +
+    `STEP 4 — LIGHT LAYER: Add at least 1 floor_lamp or table_lamp near the anchor cluster. ` +
+    `Place it at reading height (0.6-0.8m for table lamp, 1.6m for floor lamp).\n\n` +
+    `STEP 5 — TEXTILE + ACCESSORY: Add 1 area rug under the anchor + support cluster ` +
+    `(represent as a thin flat piece, heightM=0.02). Add 1-2 small shelf or plant items as accent.\n\n` +
+    `MANDATORY ITEM COUNT: 8-14 items for living/bedroom/kitchen-living; 5-8 for kitchen/bathroom; 3-5 for wc/hallway.\n`;
 
   const focalClause = focalPoint
-    ? `\nFOCAL WALL (W1 back wall): "${focalPoint}" — anchor the primary piece to this wall or facing it.\n`
+    ? `\nFOCAL WALL (${lightWallId} back wall): "${focalPoint}" — anchor the primary piece to this wall or facing it.\n`
     : '';
 
   const userPrompt =
@@ -986,27 +1036,32 @@ export async function buildRoomFurniturePlan(
     `Room: ${room.type} (${room.name})\n` +
     `Dimensions: W=${W.toFixed(1)}m × L=${L.toFixed(1)}m × H=${H.toFixed(1)}m\n` +
     `Walls (ID, length, features):\n${wallLines}\n\n` +
-    `Wall system: W1=back(Z far), W2=right(X far), W3=front(Z near)=CAMERA WALL, W4=left(X=0)\n` +
+    `Wall system: W1=back(Z far), W2=right(X far), W3=front(Z near), W4=left(X=0)\n` +
     `positionAlongWall: 0.0=start of wall, 1.0=end of wall\n` +
     focalClause +
-    `\nRequired furniture: ${mandatory}\n\n` +
-    designerPrinciples +
+    `\nOpenings: ${windowsAndDoors}\n` +
+    `Clearance rules: keep 400mm clear from ANY window edge; keep 900mm clear in front of ANY door swing.\n\n` +
+    `Required furniture: ${mandatory}\n\n` +
+    protocol +
     `\nHard rules:\n` +
-    `- Never place furniture blocking a door opening\n` +
-    `- Never place furniture over a window\n` +
+    `- Never place furniture blocking a door opening (900mm clear in front of door)\n` +
+    `- Never place furniture directly over a window sill\n` +
     `- positionAlongWall + widthM / wallLength must be ≤ 1.0\n` +
-    `- Do NOT place furniture against ${camWall} (camera wall)\n\n` +
+    `- Do NOT place furniture against ${camWall} (camera wall — must stay clear)\n\n` +
     `Return JSON: { "furniture": [ ... ] }\n` +
     `Each item: { "id":"F1", "type":"sofa", "anchorWallId":"W1", "positionAlongWall":0.1, "widthM":2.1, "depthM":0.9, "heightM":0.85, "facing":"center" }\n` +
     `Exact type names: sofa, bed, wardrobe, nightstand, tv_unit, ` +
     `coffee_table, shelving, console_table, kitchen_run, upper_cabinets, fridge, sink_kitchen, stove, ` +
-    `bathtub, shower, toilet, vanity_sink, corner_sink, accent_chair, dining_table, dining_chair.\n` +
+    `bathtub, shower, toilet, vanity_sink, corner_sink, accent_chair, dining_table, dining_chair, ` +
+    `floor_lamp, table_lamp, area_rug, plant, side_table, bookshelf.\n` +
     `Wall-mounted items (upper_cabinets): set "yOffsetM" to floor clearance (e.g. 1.5).\n` +
+    `area_rug: heightM=0.02, depthM = span into room (e.g. 2.5 for living).\n` +
     `Kitchen sequence: fridge → sink_kitchen → prep gap → stove, kitchen_run as base counter, upper_cabinets above.\n` +
     `Sizes: sofa~2.0×0.9×0.85, bed~1.6×2.0×0.55, wardrobe~1.2×0.6×2.2, accent_chair~0.75×0.75×0.85, ` +
     `dining_table~1.4×0.9×0.76, dining_chair~0.45×0.45×0.85, fridge~0.65×0.65×1.85, ` +
     `sink_kitchen~0.8×0.6×0.9, stove~0.6×0.6×0.9, kitchen_run~[wall_width]×0.6×0.9, upper_cabinets~[wall_width]×0.35×0.7, ` +
-    `toilet~0.4×0.65×0.8, bathtub~1.7×0.75×0.6, shower~0.9×0.9×2.0, vanity_sink~0.85×0.55×0.85`;
+    `toilet~0.4×0.65×0.8, bathtub~1.7×0.75×0.6, shower~0.9×0.9×2.0, vanity_sink~0.85×0.55×0.85, ` +
+    `floor_lamp~0.3×0.3×1.6, table_lamp~0.25×0.25×0.6, plant~0.4×0.4×1.2`;
 
   try {
     const raw = await callKimi({
@@ -1015,7 +1070,7 @@ export async function buildRoomFurniturePlan(
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.3,
-      max_tokens: 900,
+      max_tokens: 4000,
       label: `buildRoomFurniturePlan:${room.name}`,
     });
     const first = raw.indexOf('{');
@@ -1025,10 +1080,10 @@ export async function buildRoomFurniturePlan(
       : JSON.parse(raw) as { furniture?: unknown };
     const validated = validateFurnitureResponse(parsed.furniture, room);
 
-    // FIX 1: strip any items Groq placed on the camera wall despite instruction
+    // Strip any items placed on the camera wall despite instruction
     const filtered = validated.filter(f => f.anchorWallId !== camWall);
     if (filtered.length > 0) {
-      console.log(`[designer] ${room.name}: planned ${filtered.length} furniture objects`);
+      console.log(`[designer] ${room.name} (${room.type}, ${(W*L).toFixed(0)}m²): ${filtered.length} items planned ✓`);
       return filtered;
     }
     console.warn(`[designer] ${room.name}: Groq returned 0 valid objects — using fallback`);
@@ -1036,9 +1091,9 @@ export async function buildRoomFurniturePlan(
     console.warn(`[designer] ${room.name}: Groq failed — using fallback:`, err instanceof Error ? err.message : err);
   }
 
-  // FIX 1: filter fallback too — never put furniture on camera wall
+  // Filter fallback too — never put furniture on camera wall
   const fallback = (FALLBACK_FURNITURE[room.type] ?? FALLBACK_FURNITURE['living'] ?? [])
     .filter(f => f.anchorWallId !== camWall);
-  console.log(`[designer] ${room.name}: fallback furniture — ${fallback.length} objects`);
+  console.log(`[designer] ${room.name} (${room.type}): fallback library (${fallback.length} items)`);
   return fallback;
 }

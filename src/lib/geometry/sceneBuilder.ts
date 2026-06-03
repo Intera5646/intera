@@ -100,15 +100,35 @@ function extractOpenings(room: GeometryRoom): WallOpening[] {
   return openings;
 }
 
+const OPPOSITE_WALL: Record<string, string> = { W1: 'W3', W3: 'W1', W2: 'W4', W4: 'W2' };
+
 export function buildScene(room: GeometryRoom, cameraIndex = 0): RoomScene {
   const { width_m: W, length_m: L, height_m: H } = room.dimensions;
   const eyeY = Math.min(1.6, H * 0.6);
-  // FIX 6: use tighter inset for small rooms so camera doesn't clip through furniture
   const area = W * L;
   const inset = area < 4 ? INSET_SMALL : INSET_M;
 
-  const camSuggestion = room.suggested_cameras[cameraIndex] ?? room.suggested_cameras[0];
-  const wallId = camSuggestion?.camera_at_wall_id ?? 'W3';
+  // Find the wall with the most total window width → camera goes on OPPOSITE wall
+  let maxWindowM = 0;
+  let lightWallId: string | null = null;
+  for (const wall of room.walls) {
+    const totalW = wall.features
+      .filter(f => f.type === 'window')
+      .reduce((sum, f) => sum + f.width_m, 0);
+    if (totalW > maxWindowM) {
+      maxWindowM = totalW;
+      lightWallId = wall.id;
+    }
+  }
+
+  let wallId: string;
+  if (lightWallId && maxWindowM > 0) {
+    wallId = OPPOSITE_WALL[lightWallId] ?? (room.suggested_cameras[cameraIndex]?.camera_at_wall_id ?? 'W3');
+    console.log(`[3d-model] ${room.name}: light wall ${lightWallId} (${maxWindowM.toFixed(1)}m windows) → camera on ${wallId}`);
+  } else {
+    const camSuggestion = room.suggested_cameras[cameraIndex] ?? room.suggested_cameras[0];
+    wallId = camSuggestion?.camera_at_wall_id ?? 'W3';
+  }
 
   return {
     width_m:  W,
