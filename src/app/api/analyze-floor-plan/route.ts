@@ -250,7 +250,8 @@ Return ONLY this JSON structure:
           "id": "W1",
           "length_m": <length of this wall in metres>,
           "features": [
-            { "type": "window", "position_from_start_m": 0.8, "width_m": 1.2 }
+            { "type": "window", "position_from_start_m": 0.8, "width_m": 1.2,
+              "sill_mm": 900, "height_mm": 1200 }
           ]
         },
         { "id": "W2", "length_m": <length>, "features": [] },
@@ -258,7 +259,8 @@ Return ONLY this JSON structure:
           "id": "W3",
           "length_m": <length>,
           "features": [
-            { "type": "door", "position_from_start_m": 0.3, "width_m": 0.9 }
+            { "type": "door", "position_from_start_m": 0.3, "width_m": 0.9,
+              "sill_mm": 0, "height_mm": 2100 }
           ]
         },
         { "id": "W4", "length_m": <length>, "features": [] }
@@ -281,8 +283,11 @@ FEATURES in walls:
 - type: "window" or "door"
 - position_from_start_m: distance in metres from the LEFT corner of that wall (when facing the wall from inside)
 - width_m: width of the opening in metres
-- For features described in mm in the analysis, convert to metres (e.g. 900mm → 0.9)
+- sill_mm: floor-to-sill height in mm. Default 900 for windows, 0 for doors.
+- height_mm: opening height in mm. Default 1200 for windows, 2100 for doors.
+- For features described in mm in the analysis, convert position/width to metres but keep sill_mm/height_mm in mm
 - If a position is not mentioned, distribute evenly (e.g. a single opening: position = (wall_length - opening_width) / 2)
+- Every room MUST have at least one door opening somewhere. Any room touching an exterior wall must have at least one window.
 
 For NON-rectangular rooms, replace the "shape" field with:
   "shape": {
@@ -738,10 +743,17 @@ function parseStep2Response(rawJson: string): Step2Data | null {
             const featType = String(feat.type ?? '') === 'door' ? 'door' : 'window';
             const pos = Number(feat.position_from_start_m ?? feat.position ?? 0);
             const w_m = Number(feat.width_m ?? feat.width ?? (featType === 'door' ? 0.9 : 1.2));
+            // sill_mm / height_mm → convert to metres (values > 10 are in mm, else already metres)
+            const rawSill = Number(feat.sill_mm ?? feat.sill_height_m ?? '');
+            const rawH    = Number(feat.height_mm ?? feat.opening_height_m ?? '');
+            const sill_height_m   = Number.isFinite(rawSill)  && rawSill  >= 0 ? (rawSill  > 10 ? rawSill  / 1000 : rawSill)  : undefined;
+            const opening_height_m = Number.isFinite(rawH) && rawH > 0 ? (rawH > 10 ? rawH / 1000 : rawH) : undefined;
             return {
               type: featType,
               position_from_start_m: Number.isFinite(pos) ? Math.max(0, pos) : 0,
               width_m: Number.isFinite(w_m) && w_m > 0 ? Math.min(w_m, 5) : (featType === 'door' ? 0.9 : 1.2),
+              ...(sill_height_m   !== undefined ? { sill_height_m }   : {}),
+              ...(opening_height_m !== undefined ? { opening_height_m } : {}),
             };
           });
           const wallLen = Number(wall.length_m ?? wall.length ?? 3);

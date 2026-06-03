@@ -3,6 +3,10 @@ export interface WallFeature {
   position_from_start_m: number;
   width_m: number;
   leads_to_room_id?: string;
+  /** Floor-to-sill height in metres. Defaults: 0 for doors, 0.9 for windows. */
+  sill_height_m?: number;
+  /** Opening height in metres. Defaults: 2.1 for doors, 1.2 for windows. */
+  opening_height_m?: number;
 }
 
 export interface RoomWall {

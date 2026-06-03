@@ -79,8 +79,9 @@ function extractOpenings(room: GeometryRoom): WallOpening[] {
 
     for (const feat of wall.features) {
       const isDoor = feat.type === 'door';
-      const yMin = isDoor ? 0 : 0.9;
-      const yMax = isDoor ? 2.1 : Math.min(2.1, H - 0.1);
+      const yMin = feat.sill_height_m   ?? (isDoor ? 0   : 0.9);
+      const defaultH = isDoor ? 2.1 : 1.2;
+      const yMax = Math.min(yMin + (feat.opening_height_m ?? defaultH), H - 0.01);
       const latMin = Math.max(0, feat.position_from_start_m);
       const latMax = Math.min(def.lateralMax, feat.position_from_start_m + feat.width_m);
       if (latMax <= latMin || yMax <= yMin) continue;

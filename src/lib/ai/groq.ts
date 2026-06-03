@@ -509,7 +509,12 @@ const FLUX_NEGATIVE_PROMPT =
   'sparse furniture, empty room, minimal styling, bare walls, cluttered, messy, ' +
   'mismatched scale, video-game render, CGI plastic look, harsh fluorescent lighting, ' +
   'oversaturated colors, flat lighting, dark shadows, underexposed, noise, artifacts, ' +
-  'extra doors, extra windows, invented arches, hallway openings, wrong wall openings';
+  'extra doors, extra windows, invented arches, hallway openings, wrong wall openings, ' +
+  'no windows, no natural light, dark bunker, pitch black room, extreme close-up, ' +
+  'single wall visible only, back wall only, abstract macro, ' +
+  'hotel-like sterility, brutalist, raw concrete, exposed structure, under construction, ' +
+  'ceiling fan, fluorescent lights, dated, 1990s style, no furniture, sparse interior, ' +
+  'render, CGI, architecture diagram, floor plan view, top-down view';
 
 const ROOM_TYPE_EN: Record<string, string> = {
   kitchen:     'kitchen interior',
@@ -658,6 +663,14 @@ export async function buildWallAwareBrief(
     const materials = designVision.statementMaterials.join(', ');
     const mood      = designVision.moodKeywords.join(', ');
 
+    // Describe the window wall for the camera composition block
+    const windowWallDesc = windowWallIds.length > 0
+      ? windowWallIds.map(id => WALL_NAMES[id] ?? id).join(' and ')
+      : 'the feature wall';
+    const windowLightDesc = windowWallIds.length > 0
+      ? `${windowWallIds.length === 1 ? 'Window' : 'Windows'} on ${windowWallDesc} — soft diffused daylight entering from that direction. No harsh shadows. Bright, airy, lived-in.`
+      : 'No exterior windows — warm ambient artificial lighting, balanced interior glow, multiple light sources.';
+
     const promptParts = [
       `Editorial interior design photograph, ${roomTypeEn}, ${sizeTag}, ${heightTag}.`,
       `Designed following: ${designVision.concept}`,
@@ -667,8 +680,9 @@ export async function buildWallAwareBrief(
       `LAYERING (mandatory, do not omit): floor → area rug under furniture → furniture arranged with intentional asymmetry → table-height accent pieces (vases, books, ceramics) → wall art clustered off-center → ceiling element (pendant or feature light).`,
       `LIGHTING: ${designVision.lightingPhilosophy}`,
       `MOOD: ${mood}. Lived-in, not staged. One sculptural hero piece clearly visible. Generous negative space.`,
-      `${lightingDesc}. ${camDesc}. Golden hour soft directional natural light.`,
-      `Architectural Digest editorial quality. Shot on medium-format camera, 35mm equivalent, slight grain. No people.`,
+      `CAMERA & COMPOSITION: Wide-angle editorial interior photograph. Camera at ${WALL_NAMES[cameraWallId] ?? cameraWallId} looking diagonally toward ${windowWallDesc}. Three-quarter view: two complete walls visible meeting at vertical corner edge, full floor visible, ceiling visible. Eye-level 1.65m, slight downward tilt 10°. Architectural Digest composition.`,
+      `NATURAL LIGHT: ${windowLightDesc}. Not a nighttime scene.`,
+      `PHOTOGRAPHY STYLE: Hasselblad medium format, 35mm lens equivalent. Slight warm color grade. Professional architectural photography. Depth of field with sharp foreground and background. No people.`,
       ...(furnitureClause ? [furnitureClause] : []),
       ...(wishes?.trim() ? [wishes.slice(0, 200)] : []),
       // Frame contract as a soft instruction embedded in the prompt
@@ -1009,43 +1023,75 @@ export async function buildRoomFurniturePlan(
     return totalM > (best?.totalM ?? 0) ? { id: w.id, totalM } : best;
   }, null);
   const lightWallId = lightWall?.totalM ? lightWall.id : 'W1';
+  const OPPOSITE_WALL: Record<string, string> = { W1: 'W3', W3: 'W1', W2: 'W4', W4: 'W2' };
 
-  const protocol =
-    `DESIGN PROTOCOL — follow these 5 steps in order:\n\n` +
-    `STEP 1 — ORIENT: Light wall is ${lightWallId} (windows face here). ` +
-    `Camera is on ${camWall} (opposite). ` +
-    `All furniture must face or be parallel to the light wall — NEVER turn backs to the windows.\n\n` +
-    `STEP 2 — ANCHOR: Place the PRIMARY piece for this room type against or facing ${lightWallId}. ` +
-    `(bed for bedroom, sofa for living, dining table for kitchen-living, work counter for kitchen, vanity for bathroom). ` +
-    `Centre it or offset ≤ 20% from centre. This is the most important piece — make it prominent.\n\n` +
-    `STEP 3 — SUPPORT: Add 2-4 supporting pieces that cluster around the anchor. ` +
-    `(nightstands flanking bed, coffee table in front of sofa, accent chairs at 45°, side tables). ` +
-    `Each zone gets 2-3 related items. Include at least ONE tall vertical piece (wardrobe, shelving, floor lamp).\n\n` +
-    `STEP 4 — LIGHT LAYER: Add at least 1 floor_lamp or table_lamp near the anchor cluster. ` +
-    `Place it at reading height (0.6-0.8m for table lamp, 1.6m for floor lamp).\n\n` +
-    `STEP 5 — TEXTILE + ACCESSORY: Add 1 area rug under the anchor + support cluster ` +
-    `(represent as a thin flat piece, heightM=0.02). Add 1-2 small shelf or plant items as accent.\n\n` +
-    `MANDATORY ITEM COUNT: 8-14 items for living/bedroom/kitchen-living; 5-8 for kitchen/bathroom; 3-5 for wc/hallway.\n`;
+  const ncidqSystem =
+    `You are a certified NCIDQ interior designer with 20 years of residential Russian apartment experience. ` +
+    `You approach EVERY room by following this exact mental protocol before placing any furniture:\n\n` +
+    `ORIENT → ANCHOR → ZONE → LAYER → ACCESSORIZE\n\n` +
+    `ORIENT: (answer these before anything else)\n` +
+    `  • Light wall (${lightWallId}) has the main window(s). Never block with tall furniture. Seating always faces or turns toward light.\n` +
+    `  • Camera wall (${camWall}) is the ENTRY side. First 90cm must stay clear.\n` +
+    `  • FOCUS WALL is the wall opposite the camera (${OPPOSITE_WALL[camWall] ?? 'W1'}). This wall gets the anchor piece and visual treatment.\n\n` +
+    `ANCHOR: Place the signature piece of this room type first.\n` +
+    `  Bedroom → bed: headboard on FOCUS WALL (${OPPOSITE_WALL[camWall] ?? 'W1'}), perpendicular to light. NEVER under window. NEVER against camera wall.\n` +
+    `  Living room → sofa: faces focal wall or window. NEVER with back to window unless unavoidable.\n` +
+    `  Kitchen-living → dining table or island: center of room with 900mm clearance all around.\n` +
+    `  Corridor/hallway → console or wardrobe: longest solid wall. Mirror on opposite.\n` +
+    `  Bathroom → bathtub/shower first, then vanity near window for natural light.\n\n` +
+    `ZONE: After anchor, create function zones around it.\n` +
+    `  Each zone = anchor + 2-4 supporting pieces that relate spatially.\n` +
+    `  Minimum 700mm circulation between zones.\n\n` +
+    `LAYER (mandatory for ALL rooms):\n` +
+    `  Level 1 — Floor layer: area_rug under anchor furniture group (heightM=0.02).\n` +
+    `     Rug size: at least 2 legs of sofa on it, or full bed frame on it.\n` +
+    `  Level 2 — Furniture layer: anchor + support pieces with intentional asymmetry.\n` +
+    `  Level 3 — Surface layer: items ON furniture (table_lamp, plant, small shelf).\n` +
+    `  Level 4 — Wall layer: shelving or art at 145-160cm center height.\n` +
+    `  Level 5 — Ceiling layer: floor_lamp near reading zones, pendant at dining.\n\n` +
+    `MANDATORY ITEM COUNTS:\n` +
+    `  Living room > 12m²: 16+ items   |   Kitchen-living > 10m²: 18+ items\n` +
+    `  Bedroom > 10m²: 14+ items       |   Bedroom 6-10m²: 10+ items\n` +
+    `  Bathroom: 8+ items              |   Corridor > 4m²: 8+ items   |   WC: 4+ items\n\n` +
+    `NEVER: block window access with tall furniture, place seating with back to main window,\n` +
+    `       leave walls completely bare, forget a rug, forget at least 2 light sources per room.\n\n` +
+    `Return only valid JSON { "furniture": [...] }.`;
 
   const focalClause = focalPoint
     ? `\nFOCAL WALL (${lightWallId} back wall): "${focalPoint}" — anchor the primary piece to this wall or facing it.\n`
     : '';
 
+  // Explicit window/door orientation text for FIX 6
+  const windowLines = room.walls.flatMap(wall =>
+    wall.features.filter(f => f.type === 'window').map(f =>
+      `WINDOW on ${wall.id} at ${f.position_from_start_m.toFixed(1)}m from start, ${f.width_m.toFixed(1)}m wide` +
+      (f.sill_height_m !== undefined ? `, sill ${(f.sill_height_m * 1000).toFixed(0)}mm` : '') +
+      `. Natural light enters FROM THIS SIDE.`
+    )
+  );
+  const doorLines = room.walls.flatMap(wall =>
+    wall.features.filter(f => f.type === 'door').map(f =>
+      `DOOR on ${wall.id} at ${f.position_from_start_m.toFixed(1)}m from start, ${f.width_m.toFixed(1)}m wide. Keep 900mm clear.`
+    )
+  );
+  const openingGuide = [...windowLines, ...doorLines].join('\n') || 'No openings detected — use default placement.';
+
   const userPrompt =
-    `Place furniture in this room for a photorealistic 3D depth map render.\n\n` +
+    `Place furniture in this ${room.type} room for a photorealistic 3D depth map render.\n\n` +
     `Room: ${room.type} (${room.name})\n` +
     `Dimensions: W=${W.toFixed(1)}m × L=${L.toFixed(1)}m × H=${H.toFixed(1)}m\n` +
+    `Area: ${(W * L).toFixed(1)}m²\n\n` +
     `Walls (ID, length, features):\n${wallLines}\n\n` +
     `Wall system: W1=back(Z far), W2=right(X far), W3=front(Z near), W4=left(X=0)\n` +
+    `Light wall: ${lightWallId} | Camera wall: ${camWall} (keep clear)\n` +
     `positionAlongWall: 0.0=start of wall, 1.0=end of wall\n` +
     focalClause +
-    `\nOpenings: ${windowsAndDoors}\n` +
-    `Clearance rules: keep 400mm clear from ANY window edge; keep 900mm clear in front of ANY door swing.\n\n` +
-    `Required furniture: ${mandatory}\n\n` +
-    protocol +
+    `\nOPENINGS AND LIGHT DIRECTION:\n${openingGuide}\n` +
+    `\nRequired furniture type: ${mandatory}\n\n` +
+    `Follow the ORIENT→ANCHOR→ZONE→LAYER→ACCESSORIZE protocol from the system message.\n` +
     `\nHard rules:\n` +
-    `- Never place furniture blocking a door opening (900mm clear in front of door)\n` +
-    `- Never place furniture directly over a window sill\n` +
+    `- Never place furniture blocking any door (900mm clear arc in front)\n` +
+    `- Never place tall furniture blocking any window\n` +
     `- positionAlongWall + widthM / wallLength must be ≤ 1.0\n` +
     `- Do NOT place furniture against ${camWall} (camera wall — must stay clear)\n\n` +
     `Return JSON: { "furniture": [ ... ] }\n` +
@@ -1054,19 +1100,19 @@ export async function buildRoomFurniturePlan(
     `coffee_table, shelving, console_table, kitchen_run, upper_cabinets, fridge, sink_kitchen, stove, ` +
     `bathtub, shower, toilet, vanity_sink, corner_sink, accent_chair, dining_table, dining_chair, ` +
     `floor_lamp, table_lamp, area_rug, plant, side_table, bookshelf.\n` +
-    `Wall-mounted items (upper_cabinets): set "yOffsetM" to floor clearance (e.g. 1.5).\n` +
-    `area_rug: heightM=0.02, depthM = span into room (e.g. 2.5 for living).\n` +
-    `Kitchen sequence: fridge → sink_kitchen → prep gap → stove, kitchen_run as base counter, upper_cabinets above.\n` +
+    `Wall-mounted items (upper_cabinets, shelving at height): set "yOffsetM" to floor clearance.\n` +
+    `area_rug: heightM=0.02, depthM = span into room.\n` +
+    `Kitchen: fridge → sink_kitchen → prep gap → stove along one wall; upper_cabinets above at yOffsetM=1.5.\n` +
     `Sizes: sofa~2.0×0.9×0.85, bed~1.6×2.0×0.55, wardrobe~1.2×0.6×2.2, accent_chair~0.75×0.75×0.85, ` +
     `dining_table~1.4×0.9×0.76, dining_chair~0.45×0.45×0.85, fridge~0.65×0.65×1.85, ` +
-    `sink_kitchen~0.8×0.6×0.9, stove~0.6×0.6×0.9, kitchen_run~[wall_width]×0.6×0.9, upper_cabinets~[wall_width]×0.35×0.7, ` +
+    `sink_kitchen~0.8×0.6×0.9, stove~0.6×0.6×0.9, kitchen_run~[wall]×0.6×0.9, upper_cabinets~[wall]×0.35×0.7, ` +
     `toilet~0.4×0.65×0.8, bathtub~1.7×0.75×0.6, shower~0.9×0.9×2.0, vanity_sink~0.85×0.55×0.85, ` +
     `floor_lamp~0.3×0.3×1.6, table_lamp~0.25×0.25×0.6, plant~0.4×0.4×1.2`;
 
   try {
     const raw = await callKimi({
       messages: [
-        { role: 'system', content: 'You are a senior interior designer placing furniture according to professional design principles. Return only valid JSON.' },
+        { role: 'system', content: ncidqSystem },
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.3,

@@ -233,10 +233,11 @@ export async function generateDepthMap(imageUrl: string): Promise<string> {
 // Controlnet choices: 'depth_midas', 'depth_leres', 'lineart', 'lineart_anime',
 //   'canny', 'edge_canny', 'openpose', 'soft_edge_hed', 'soft_edge_pidi', ...
 
-const SDXL_MULTI_CONTROLNET_VERSION =
-  '89eb212b3d1366a83e949c12a4b45dfe6b6b313b594cb8268e864931ac9ffb16';
-const SDXL_MULTI_CONTROLNET_MODEL =
-  `fofr/sdxl-multi-controlnet-lora:${SDXL_MULTI_CONTROLNET_VERSION}` as const;
+// RealVisXL V3 multi-controlnet — same parameter interface as the old SDXL model
+// but fine-tuned on professional interior/architectural photography.
+// Called via the model-level predictions endpoint (no version SHA needed —
+// Replicate routes to the latest official deployment automatically).
+const REALVISXL_MULTI_CONTROLNET = 'fofr/realvisxl-v3-multi-controlnet-lora';
 
 export type SdxlMultiControlnetParams = {
   /** Public URL of the grayscale depth PNG */
@@ -262,12 +263,12 @@ export async function generateSdxlMultiControlnet(
 ): Promise<string> {
   const client = getClient();
 
-  const numOutputs       = params.numOutputs        ?? 1;
-  const inferenceSteps   = params.numInferenceSteps  ?? 40;
-  const depthScale       = params.depthScale         ?? 0.7;
-  const lineartScale     = params.lineartScale       ?? 0.4;
-  const ipAdapterWeight  = params.ipAdapterWeight    ?? 0.7;
-  const hasIpAdapter     = Boolean(params.ipAdapterImage);
+  const numOutputs      = params.numOutputs        ?? 1;
+  const inferenceSteps  = params.numInferenceSteps  ?? 50;
+  const depthScale      = params.depthScale         ?? 0.7;
+  const lineartScale    = params.lineartScale       ?? 0.4;
+  const ipAdapterWeight = params.ipAdapterWeight    ?? 0.7;
+  const hasIpAdapter    = Boolean(params.ipAdapterImage);
 
   const input: Record<string, unknown> = {
     prompt:                            params.prompt,
@@ -275,6 +276,7 @@ export async function generateSdxlMultiControlnet(
     num_outputs:                       numOutputs,
     num_inference_steps:               inferenceSteps,
     guidance_scale:                    7.5,
+    scheduler:                         'DPM++ 2M Karras',
     controlnet_1:                      'depth_midas',
     controlnet_1_image:                params.depthMapUrl,
     controlnet_1_conditioning_scale:   depthScale,
@@ -293,8 +295,9 @@ export async function generateSdxlMultiControlnet(
   };
 
   console.log(
-    '[sdxl-multi-controlnet] Creating prediction (async) |',
+    '[realvisxl-controlnet] Creating prediction (async) |',
     'outputs:', numOutputs,
+    '| steps:', inferenceSteps,
     '| depth_scale:', depthScale,
     '| lineart_scale:', lineartScale,
     `| ip_adapter: ${hasIpAdapter ? `yes (weight ${ipAdapterWeight})` : 'no'}`,
@@ -304,23 +307,24 @@ export async function generateSdxlMultiControlnet(
 
   let prediction: { id: string };
   try {
+    // model-level endpoint: Replicate routes to latest deployed version (no SHA needed)
     prediction = await client.predictions.create({
-      version: SDXL_MULTI_CONTROLNET_VERSION,
+      model: REALVISXL_MULTI_CONTROLNET,
       input,
-    });
+    } as Parameters<typeof client.predictions.create>[0]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[sdxl-multi-controlnet] predictions.create FAILED:', msg);
-    console.error('[sdxl-multi-controlnet] Input sent:', JSON.stringify(input, null, 2));
+    console.error('[realvisxl-controlnet] predictions.create FAILED:', msg);
+    console.error('[realvisxl-controlnet] Input sent:', JSON.stringify(input, null, 2));
     if (err && typeof err === 'object') {
       const e = err as Record<string, unknown>;
-      if (e.response) console.error('[sdxl-multi-controlnet] response:', JSON.stringify(e.response));
-      if (e.detail)   console.error('[sdxl-multi-controlnet] detail:',   JSON.stringify(e.detail));
+      if (e.response) console.error('[realvisxl-controlnet] response:', JSON.stringify(e.response));
+      if (e.detail)   console.error('[realvisxl-controlnet] detail:',   JSON.stringify(e.detail));
     }
     throw new Error(`generateSdxlMultiControlnet: ${msg}`);
   }
 
-  console.log('[sdxl-multi-controlnet] Prediction created, id:', prediction.id);
+  console.log('[realvisxl-controlnet] Prediction created, id:', prediction.id);
   return prediction.id;
 }
 
@@ -360,7 +364,7 @@ export async function getPrediction(predictionId: string): Promise<PredictionRes
     urls = filtered.slice(0, n);
 
     console.log(
-      '[sdxl-multi-controlnet] Prediction outputs raw count:', rawUrls.length,
+      '[realvisxl-controlnet] Prediction outputs raw count:', rawUrls.length,
       ', kept:', urls.length, '(after filtering control maps)',
     );
   }
