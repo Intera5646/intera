@@ -1432,14 +1432,11 @@ function ConfirmStep({
                       step="0.1"
                       defaultValue={room.dimensions[dim]}
                       key={`${room.id}-${dim}`}
-                      onBlur={polygonRoom ? undefined : (e) => updateDim(idx, dim, e.target.value)}
-                      onChange={polygonRoom ? undefined : (e) => updateDim(idx, dim, e.target.value)}
-                      readOnly={polygonRoom}
+                      onBlur={(e) => updateDim(idx, dim, e.target.value)}
+                      onChange={(e) => updateDim(idx, dim, e.target.value)}
                       style={{
                         width: '100%', borderRadius: 10, border: '1px solid var(--line)',
-                        padding: '8px 10px',
-                        background: polygonRoom ? '#F5F2EE' : 'var(--white)',
-                        color: polygonRoom ? 'var(--muted)' : 'var(--ink)',
+                        padding: '8px 10px', background: 'var(--white)', color: 'var(--ink)',
                         fontSize: 13, fontFamily: 'inherit', minHeight: 44, boxSizing: 'border-box',
                       }}
                     />

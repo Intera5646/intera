@@ -7,7 +7,8 @@ import { polygonAreaMm2, isPolygonAxisAlignedRectangle } from '../lib/geometry/p
 const VP_W = 320;
 const VP_H = 240;
 const V_R = 9;
-const M_R = 5;
+const M_R = 10;
+const DEL_R = 8;
 
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
@@ -186,6 +187,11 @@ export default function PolygonEditor({
 
         {/* SVG canvas */}
         <div style={{ padding: '12px 18px' }}>
+          {mode === 'polygon' && (
+            <div style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', marginBottom: 6, opacity: 0.8 }}>
+              Тапни <b>+</b> чтобы добавить вершину, <b>×</b> чтобы убрать
+            </div>
+          )}
           <svg
             ref={svgRef}
             viewBox={`0 0 ${VP_W} ${VP_H}`}
@@ -227,29 +233,48 @@ export default function PolygonEditor({
 
             {mode === 'polygon' && (
               <>
-                {/* Edge midpoints — click to insert vertex */}
+                {/* Edge midpoints — always-visible "+" button to insert vertex */}
                 {points.map((p, i) => {
                   const q = points[(i + 1) % points.length];
+                  const mx = toX((p.x_mm + q.x_mm) / 2);
+                  const my = toY((p.y_mm + q.y_mm) / 2);
                   return (
-                    <circle key={`m${i}`}
-                      cx={toX((p.x_mm + q.x_mm) / 2)} cy={toY((p.y_mm + q.y_mm) / 2)}
-                      r={M_R}
-                      fill="rgba(255,255,255,0.85)" stroke="rgba(34,30,26,0.3)" strokeWidth="1"
-                      style={{ cursor: 'copy' }}
-                      onClick={(e) => { e.stopPropagation(); insertAt(i); }}
-                    />
+                    <g key={`m${i}`} style={{ cursor: 'copy' }}
+                      onClick={(e) => { e.stopPropagation(); insertAt(i); }}>
+                      <circle cx={mx} cy={my} r={M_R}
+                        fill="rgba(255,255,255,0.95)" stroke="rgba(34,30,26,0.35)" strokeWidth="1.2" />
+                      <text x={mx} y={my + 0.5} textAnchor="middle" dominantBaseline="middle"
+                        fontSize="13" fontWeight="700" fill="rgba(34,30,26,0.7)" style={{ pointerEvents: 'none' }}>
+                        +
+                      </text>
+                    </g>
                   );
                 })}
-                {/* Vertices — drag to move, double-click to delete */}
+                {/* Vertices — drag to move */}
                 {points.map((p, i) => (
                   <circle key={`v${i}`}
                     cx={toX(p.x_mm)} cy={toY(p.y_mm)} r={V_R}
                     fill="#fff" stroke="#221E1A" strokeWidth="2"
                     style={{ cursor: 'grab' }}
                     onPointerDown={(e) => onVertexDown(e, i)}
-                    onDoubleClick={(e) => { e.stopPropagation(); deleteAt(i); }}
                   />
                 ))}
+                {/* "×" delete buttons — offset above each vertex, shown when count > 4 */}
+                {points.length > 4 && points.map((p, i) => {
+                  const vx = toX(p.x_mm);
+                  const vy = toY(p.y_mm);
+                  return (
+                    <g key={`del${i}`} style={{ cursor: 'pointer' }}
+                      onClick={(e) => { e.stopPropagation(); deleteAt(i); }}>
+                      <circle cx={vx + 10} cy={vy - 10} r={DEL_R}
+                        fill="#C0392B" stroke="#fff" strokeWidth="1.2" />
+                      <text x={vx + 10} y={vy - 10 + 0.5} textAnchor="middle" dominantBaseline="middle"
+                        fontSize="10" fontWeight="700" fill="#fff" style={{ pointerEvents: 'none' }}>
+                        ×
+                      </text>
+                    </g>
+                  );
+                })}
               </>
             )}
           </svg>
@@ -266,13 +291,9 @@ export default function PolygonEditor({
           {mode === 'polygon' && (
             <span style={{ fontSize: 12, color: 'var(--muted)' }}>· {points.length} вершин</span>
           )}
-          {selfIntersects ? (
+          {selfIntersects && (
             <span style={{ fontSize: 12, color: '#B14A3F', fontWeight: 600, marginLeft: 'auto' }}>
               ⚠ Самопересечение
-            </span>
-          ) : mode === 'polygon' && (
-            <span style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 'auto', opacity: 0.75 }}>
-              тяни · ✚ на ребре · ×2 удалить
             </span>
           )}
         </div>

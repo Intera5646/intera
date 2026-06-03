@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '../../../../lib/supabase/server';
 import { parseSessionCookie, verifySessionToken } from '../../../../lib/auth';
 import { getPrediction } from '../../../../lib/ai/adapter';
+import { buildApartmentReport, type DesignerText } from '../../../../lib/ai/groq';
+import type { ApartmentGeometry } from '../../../../lib/geometry/types';
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Auth check — status polling requires a valid session
@@ -167,8 +169,34 @@ async function resolvePendingPredictions(
     .filter(Boolean);
   const anyRenderUrls = aggregatedUrls.length > 0;
 
-  // If all predictions resolved, update the master generation row now
+  // If all predictions resolved, generate apartment report then update master row
   if (allDone) {
+    let designerText: DesignerText | null = null;
+    let reportText: string | null = null;
+
+    if (anyRenderUrls) {
+      try {
+        const { data: projectRow } = await supabaseServer
+          .from('projects')
+          .select('style, budget_level, geometry_extracted_json')
+          .eq('id', projectId)
+          .single();
+        const geometry = (projectRow?.geometry_extracted_json as ApartmentGeometry | null) ?? null;
+        if (geometry?.rooms?.length) {
+          const report = await buildApartmentReport({
+            geometry,
+            style: projectRow!.style ?? '',
+            budget: projectRow!.budget_level ?? '',
+          });
+          designerText = report.designerText;
+          reportText = report.reportText;
+          console.log(`[status] Apartment report generated for master ${masterGenerationId}`);
+        }
+      } catch (reportErr) {
+        console.warn('[status] buildApartmentReport failed (non-fatal):', reportErr instanceof Error ? reportErr.message : reportErr);
+      }
+    }
+
     try {
       await supabaseServer
         .from('generations')
@@ -176,6 +204,7 @@ async function resolvePendingPredictions(
           status:      anyRenderUrls ? 'done' : 'failed',
           render_urls: aggregatedUrls,
           image_urls:  aggregatedUrls,
+          ...(designerText ? { designer_text: designerText, report_text: reportText } : {}),
           ...(anyRenderUrls ? {} : { error_message: 'All room predictions failed' }),
         })
         .eq('id', masterGenerationId);

@@ -15,12 +15,10 @@ import {
   buildFallbackPrompt,
   buildRoomPrompts,
   buildWallAwareBrief,
-  buildApartmentReport,
   buildApartmentDesignVision,
   buildRoomFurniturePlan,
   formatReportText,
   type DesignBrief,
-  type DesignerText,
   type DesignVision,
   type RoomInfo,
   type RoomPrompt,
@@ -837,23 +835,6 @@ async function runBtiPipelineV2(ctx: {
 
   const allRoomsFailedImmediately = pendingPredictions === 0 && cameraMetas.length === 0;
 
-  // Groq report — generate regardless of render status (doesn't depend on images).
-  let designerText: DesignerText | null = null;
-  let reportText: string | null = null;
-  try {
-    const report = await buildApartmentReport({
-      geometry,
-      style: params.style,
-      budget: params.budget,
-      wishes: params.wishes || undefined,
-    });
-    designerText = report.designerText;
-    reportText = report.reportText;
-    console.log('[BTI-v2] Apartment design report generated');
-  } catch (err) {
-    console.warn('[BTI-v2] Design report failed (non-fatal):', err instanceof Error ? err.message : err);
-  }
-
   try {
     await supabaseServer.from('generations').update({
       // 'processing' = predictions are in-flight; status endpoint resolves them.
@@ -862,7 +843,6 @@ async function runBtiPipelineV2(ctx: {
       camera_metadata: cameraMetas,
       depth_map_url:   cameraMetas[0]?.depth_map_url ?? null,
       processing_time: processingTime,
-      ...(designerText ? { designer_text: designerText, report_text: reportText } : {}),
       ...(allRoomsFailedImmediately ? { error_message: 'All rooms failed before prediction creation' } : {}),
     }).eq('id', params.generationId);
 
