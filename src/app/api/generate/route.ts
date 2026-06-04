@@ -115,6 +115,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // SSRF guard: only allow URLs from our own Supabase Storage
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (supabaseUrl) {
+      const storagePrefix = `${supabaseUrl}/storage/v1/object/`;
+      if (!planImageUrl.startsWith(storagePrefix)) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INVALID_URL', message: 'Недопустимый URL изображения.' } },
+          { status: 400 }
+        );
+      }
+    }
+
     console.log('[generate] Step 3: reading balance');
     const balanceResult = await supabaseServer
       .from('profiles')

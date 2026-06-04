@@ -100,6 +100,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: 'MISSING_IMAGE_URL' }, { status: 400 });
   }
 
+  // SSRF guard: only allow URLs from our own Supabase Storage
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (supabaseUrl) {
+    const storagePrefix = `${supabaseUrl}/storage/v1/object/`;
+    if (!imageUrl.startsWith(storagePrefix)) {
+      return NextResponse.json({ success: false, error: 'INVALID_IMAGE_URL' }, { status: 400 });
+    }
+  }
+
   console.log('[analyze] Raw image URL received:', imageUrl.slice(0, 120));
 
   let base64DataUrl: string;

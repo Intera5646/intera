@@ -48,7 +48,8 @@ export function parseSessionCookie(cookieHeader: string | null): string | null {
     .split(';')
     .map((pair) => pair.trim())
     .find((pair) => pair.startsWith(`${SESSION_COOKIE_NAME}=`));
-  return cookie ? cookie.split('=')[1] : null;
+  // Use slice instead of split('=')[1] to preserve '=' characters in base64url value
+  return cookie ? cookie.slice(SESSION_COOKIE_NAME.length + 1) : null;
 }
 
 export async function getProfileByPhone(phone: string) {
@@ -84,26 +85,20 @@ export async function createProfile(userId: string, phone?: string | null, name?
 }
 
 export async function findAuthUserByPhone(phone: string) {
-  const { data, error } = await supabaseServer
-    .from('auth.users')
-    .select('id,email')
-    .eq('phone', phone)
-    .limit(1)
-    .maybeSingle();
+  // supabaseServer.from('auth.users') is not supported — use admin API instead
+  const { data, error } = await supabaseServer.auth.admin.listUsers({ perPage: 1000 });
   if (error) throw error;
-  return data ?? null;
+  const user = data.users.find(u => u.phone === phone);
+  return user ? { id: user.id, email: user.email ?? null } : null;
 }
 
 export async function findAuthUserByEmail(email: string) {
   const normalized = email.trim().toLowerCase();
-  const { data, error } = await supabaseServer
-    .from('auth.users')
-    .select('id')
-    .eq('email', normalized)
-    .limit(1)
-    .maybeSingle();
+  // supabaseServer.from('auth.users') is not supported — use admin API instead
+  const { data, error } = await supabaseServer.auth.admin.listUsers({ perPage: 1000 });
   if (error) throw error;
-  return data?.id ?? null;
+  const user = data.users.find(u => (u.email ?? '').toLowerCase() === normalized);
+  return user?.id ?? null;
 }
 
 export async function createAuthUser(phone: string) {
