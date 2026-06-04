@@ -304,7 +304,7 @@ export async function generateSdxlMultiControlnet(
     num_outputs:                       numOutputs,
     num_inference_steps:               inferenceSteps,
     guidance_scale:                    7.5,
-    scheduler:                         'DPM++ 2M Karras',
+    scheduler:                         'KarrasDPM',
     controlnet_1:                      'depth_midas',
     controlnet_1_image:                params.depthMapUrl,
     controlnet_1_conditioning_scale:   depthScale,
