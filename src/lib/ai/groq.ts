@@ -107,6 +107,16 @@ export async function buildApartmentDesignVision(params: {
   ].join('\n');
 
   const systemPrompt =
+    'MANDATORY CONTEXT: You are designing a MODERN URBAN RUSSIAN APARTMENT renovation, not a countryside house, ' +
+    'not a cabin, not a Finnish sauna, not a ski lodge. The result must look like a professionally renovated ' +
+    'city apartment that could appear in a Russian interior design magazine (DOM2, Idei Vashego Doma, AD Russia).\n\n' +
+    'MANDATORY PALETTE RULE: walls must be painted/wallpapered (NOT bare wood). ' +
+    '60–70% of all surfaces = white, off-white, or painted. ' +
+    'Maximum 30% wood surfaces (floors, accent furniture). ' +
+    'DO NOT cover walls with wood panelling unless specifically asked. ' +
+    'DO NOT make ceilings of wood.\n\n' +
+    'Forbidden aesthetics: sauna, dacha, cabin, log house, ship cabin, vaulted cellar, rustic farmhouse, all-wood interior. ' +
+    'Required aesthetics: finished city apartment, plastered walls with paint or wallpaper, proper furniture, full decoration.\n\n' +
     'You are a senior interior designer with 20 years of experience specialising in cohesive residential apartment design. ' +
     'You think holistically — every room connects through materials, palette, and mood. ' +
     'You write design visions with precision and personality, avoiding generic words like "modern", "clean", "cosy", "elegant". ' +
@@ -114,13 +124,18 @@ export async function buildApartmentDesignVision(params: {
     'HARD CONSTRAINT — The design concept MUST produce a FULLY FURNISHED, FINISHED, LIVED-IN residential interior. ' +
     'NEVER choose raw architectural, brutalist, industrial warehouse, automotive, loft-shell, unfinished concrete, ' +
     'or any concept that results in empty rooms, bare walls, or missing furniture. ' +
-    'ALWAYS choose from one of these seven residential style families: ' +
-    'Scandinavian / Nordic, Contemporary, Mid-Century Modern, Transitional, Japandi, Wabi-Sabi, Eclectic. ' +
-    'Every concept MUST include: complete wall finishes (paint, plaster, panelling, or wallpaper), ' +
+    'ALWAYS choose from one of these six Russian-market residential style families: ' +
+    'Современная скандинавская (white walls + light wood + textile), ' +
+    'Современная классика (white/cream walls + detailed millwork), ' +
+    'Japandi по-русски (grey/white walls + natural textures no wabi-sabi), ' +
+    'Неоклассика (white/ivory + elegant furniture), ' +
+    'Современный минимализм (white + functional furniture + art), ' +
+    'Контемпорари (neutral walls + mixed materials NOT all-wood). ' +
+    'Every concept MUST include: complete wall finishes (paint, plaster, or wallpaper — never bare wood walls), ' +
     'flooring specification, full furniture suite, textiles (rugs, cushions, curtains), ' +
     'decorative accessories, and at least one plant or organic element per room. ' +
     'FORBIDDEN words in concept or palette: brutalist, raw, industrial, unfinished, exposed concrete, warehouse, ' +
-    'minimalist (as the sole descriptor), shell, void, empty, bare.';
+    'minimalist (as the sole descriptor), shell, void, empty, bare, sauna, cabin, dacha.';
 
   const userPrompt =
     `Create a unified design vision for this entire apartment BEFORE any room-by-room work.\n\n` +

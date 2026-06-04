@@ -29,6 +29,12 @@ type CameraMetaEntry = {
   room_id?: string;
 };
 
+type RoomCostEntry = {
+  name: string;
+  type: string;
+  area_m2: number;
+};
+
 type ProjectStatusProps = {
   generationId: string;
   initialStatus: string;
@@ -36,10 +42,47 @@ type ProjectStatusProps = {
   initialError: string | null;
   initialDesignerText: DesignerText | null;
   initialCameraMetadata?: CameraMetaEntry[] | null;
+  initialRooms?: RoomCostEntry[];
+  initialBudget?: string | null;
 };
 
 function formatPrice(value: number) {
   return value.toLocaleString('ru-RU') + ' ₽';
+}
+
+// ── Renovation cost estimate ──────────────────────────────────────────────────
+
+const RENO_RATES: Record<string, { min: number; max: number }> = {
+  bedroom:           { min: 15000, max: 25000 },
+  kids_room:         { min: 15000, max: 25000 },
+  living:            { min: 15000, max: 25000 },
+  studio_zone:       { min: 15000, max: 25000 },
+  kitchen_living:    { min: 20000, max: 35000 },
+  kitchen:           { min: 20000, max: 35000 },
+  bathroom:          { min: 30000, max: 50000 },
+  combined_bathroom: { min: 30000, max: 50000 },
+  wc:                { min: 30000, max: 50000 },
+  corridor:          { min: 12000, max: 20000 },
+  hallway:           { min: 12000, max: 20000 },
+  vestibule:         { min: 12000, max: 20000 },
+};
+const RENO_DEFAULT = { min: 14000, max: 22000 };
+
+function computeRoomCost(room: RoomCostEntry, budget: string): { min: number; max: number } {
+  const rates = RENO_RATES[room.type] ?? RENO_DEFAULT;
+  const area = Math.max(1, room.area_m2);
+  const bud = budget.toLowerCase();
+  if (bud.includes('эконом') || bud.includes('economy')) {
+    const v = Math.round(rates.min * 0.8 * area / 1000) * 1000;
+    return { min: v, max: Math.round(v * 1.15 / 1000) * 1000 };
+  }
+  if (bud.includes('премиум') || bud.includes('premium')) {
+    const v = Math.round(rates.max * 1.3 * area / 1000) * 1000;
+    return { min: Math.round(v * 0.88 / 1000) * 1000, max: v };
+  }
+  // Средний / standard / default
+  const mid = Math.round((rates.min + rates.max) / 2 * area / 1000) * 1000;
+  return { min: Math.round(mid * 0.88 / 1000) * 1000, max: Math.round(mid * 1.12 / 1000) * 1000 };
 }
 
 export default function ProjectStatus({
@@ -49,6 +92,8 @@ export default function ProjectStatus({
   initialError,
   initialDesignerText,
   initialCameraMetadata,
+  initialRooms = [],
+  initialBudget,
 }: ProjectStatusProps) {
   const router = useRouter();
 
@@ -331,6 +376,83 @@ export default function ProjectStatus({
                   )}
                 </div>
                 <AIDisclaimer />
+
+                {/* Отчёт дизайнера */}
+                {designerText && (
+                  <div style={{ maxWidth: 680, margin: '28px auto 0' }}>
+                    <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 16, color: 'var(--brand-primary)' }}>
+                      Отчёт дизайнера
+                    </h2>
+                    {[
+                      { key: 'style_explanation', label: 'Стиль и концепция' },
+                      { key: 'furniture_placement', label: 'Планировка и зонирование' },
+                      { key: 'color_solution', label: 'Цветовая палитра' },
+                      { key: 'lighting', label: 'Освещение' },
+                    ].map(({ key, label }) => {
+                      const text = designerText[key as keyof DesignerText] as string | undefined;
+                      if (!text) return null;
+                      return (
+                        <div key={key} style={{ marginBottom: 18 }}>
+                          <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>
+                            {label}
+                          </div>
+                          <p style={{ fontSize: 15, lineHeight: 1.75, color: '#444', margin: 0 }}>
+                            {text}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Приблизительная смета */}
+                {initialRooms.length > 0 && (
+                  <div style={{ maxWidth: 680, margin: '32px auto 0' }}>
+                    <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 4, color: 'var(--brand-primary)' }}>
+                      Приблизительная смета
+                    </h2>
+                    <p style={{ color: '#888', fontSize: 13, marginBottom: 16, marginTop: 0, lineHeight: 1.5 }}>
+                      Ориентировочная стоимость ремонта «под ключ» без мебели и техники
+                    </p>
+                    {(() => {
+                      const budget = initialBudget ?? 'Средний';
+                      const roomCosts = initialRooms.map(r => ({ ...r, cost: computeRoomCost(r, budget) }));
+                      const totalMin = roomCosts.reduce((s, r) => s + r.cost.min, 0);
+                      const totalMax = roomCosts.reduce((s, r) => s + r.cost.max, 0);
+                      return (
+                        <>
+                          {roomCosts.map((room, idx) => (
+                            <div
+                              key={idx}
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                padding: '10px 0',
+                                borderBottom: '1px solid #f0f0f0',
+                                fontSize: 14,
+                              }}
+                            >
+                              <span style={{ color: 'var(--brand-primary)' }}>
+                                {room.name} <span style={{ color: '#aaa', fontWeight: 400 }}>({room.area_m2} м²)</span>
+                              </span>
+                              <span style={{ color: '#555', whiteSpace: 'nowrap' }}>
+                                от {formatPrice(room.cost.min)}
+                              </span>
+                            </div>
+                          ))}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 14, fontSize: 17, fontWeight: 700, color: 'var(--brand-primary)' }}>
+                            <span>Итого:</span>
+                            <span>{formatPrice(totalMin)} – {formatPrice(totalMax)}</span>
+                          </div>
+                          <p style={{ fontSize: 12, color: '#aaa', marginTop: 10, lineHeight: 1.5 }}>
+                            * Смета является ориентировочной. Точная стоимость зависит от отделочных материалов, региона и подрядчика.
+                          </p>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
               </section>
             )}
 

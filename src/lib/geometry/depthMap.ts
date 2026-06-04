@@ -202,7 +202,10 @@ export async function generateSemanticRenderBuffer(
   const camIndex = options?.cameraIndex ?? 0;
 
   const scene = buildScene(room, camIndex);
-  const { width_m: W, length_m: L, height_m: H, camera: cam, openings } = scene;
+  const { width_m: W, length_m: L, height_m: H_raw, camera: cam, openings } = scene;
+  const H = (Number.isFinite(H_raw) && H_raw >= 2.2) ? H_raw : 2.7;
+  console.log(`[3d-model] ${room.name}: ceiling height=${H}m (flat plane${H !== H_raw ? `, clamped from ${H_raw}m` : ''})`);
+  void H_raw;
 
   // Pre-compute furniture AABBs (with their colors) once, outside the pixel loop
   const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
@@ -504,7 +507,10 @@ export async function generateDepthBuffer(
   const camIndex = options?.cameraIndex ?? 0;
 
   const scene = buildScene(room, camIndex);
-  const { width_m: W, length_m: L, height_m: H, camera: cam, openings } = scene;
+  const { width_m: W, length_m: L, height_m: H_raw, camera: cam, openings } = scene;
+  const H = (Number.isFinite(H_raw) && H_raw >= 2.2) ? H_raw : 2.7;
+  console.log(`[3d-model] ${room.name}: ceiling height=${H}m (flat plane${H !== H_raw ? `, clamped from ${H_raw}m` : ''})`);
+  void H_raw;
   const polyScene = buildPolygonScene(room);
   console.log(`[depth-map] ${room.name}: camera=${JSON.stringify({x:cam.x.toFixed(2),z:cam.z.toFixed(2)})}, openings=${openings.length}`);
 
@@ -547,7 +553,10 @@ export async function generateLineartBuffer(
   const camIndex = options?.cameraIndex ?? 0;
 
   const scene = buildScene(room, camIndex);
-  const { width_m: W, length_m: L, height_m: H, camera: cam, openings } = scene;
+  const { width_m: W, length_m: L, height_m: H_raw, camera: cam, openings } = scene;
+  const H = (Number.isFinite(H_raw) && H_raw >= 2.2) ? H_raw : 2.7;
+  console.log(`[3d-model] ${room.name}: ceiling height=${H}m (flat plane${H !== H_raw ? `, clamped from ${H_raw}m` : ''})`);
+  void H_raw;
   const polyScene = buildPolygonScene(room);
 
   const furnitureBoxes: FurnitureAABB[] = (options?.furniture ?? [])
