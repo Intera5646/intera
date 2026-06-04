@@ -235,9 +235,37 @@ export async function generateDepthMap(imageUrl: string): Promise<string> {
 
 // RealVisXL V3 multi-controlnet — same parameter interface as the old SDXL model
 // but fine-tuned on professional interior/architectural photography.
-// Called via the model-level predictions endpoint (no version SHA needed —
-// Replicate routes to the latest official deployment automatically).
+//
+// Community models on Replicate require a pinned version SHA so the SDK routes
+// to /v1/predictions; { model: 'owner/name' } hits /v1/models/.../predictions
+// which 404s for community models.  We resolve the SHA dynamically from the
+// public model endpoint and cache it per process lifetime so there's no
+// hardcoded pin to maintain.  The resolved SHA is logged on first call.
 const REALVISXL_MULTI_CONTROLNET = 'fofr/realvisxl-v3-multi-controlnet-lora';
+let _realvisxlSha: string | null = null;
+
+async function resolveRealVisXLSha(): Promise<string> {
+  if (_realvisxlSha) return _realvisxlSha;
+
+  const token = process.env.REPLICATE_API_TOKEN;
+  if (!token) throw new Error('Missing REPLICATE_API_TOKEN');
+
+  const res = await fetch(
+    `https://api.replicate.com/v1/models/${REALVISXL_MULTI_CONTROLNET}`,
+    { headers: { Authorization: `Token ${token}`, 'Content-Type': 'application/json' } },
+  );
+  if (!res.ok) {
+    throw new Error(`Replicate model lookup failed ${res.status} ${res.statusText} for ${REALVISXL_MULTI_CONTROLNET}`);
+  }
+
+  const data = await res.json() as { latest_version?: { id?: string } };
+  const sha = data.latest_version?.id;
+  if (!sha) throw new Error(`No latest_version.id for ${REALVISXL_MULTI_CONTROLNET}`);
+
+  _realvisxlSha = sha;
+  console.log(`[realvisxl-controlnet] model=${REALVISXL_MULTI_CONTROLNET} latest SHA=${sha}`);
+  return sha;
+}
 
 export type SdxlMultiControlnetParams = {
   /** Public URL of the grayscale depth PNG */
@@ -307,11 +335,11 @@ export async function generateSdxlMultiControlnet(
 
   let prediction: { id: string };
   try {
-    // model-level endpoint: Replicate routes to latest deployed version (no SHA needed)
-    prediction = await client.predictions.create({
-      model: REALVISXL_MULTI_CONTROLNET,
-      input,
-    } as Parameters<typeof client.predictions.create>[0]);
+    // Resolve the version SHA dynamically (cached per process) so the SDK
+    // routes to /v1/predictions — the community-model endpoint that works.
+    const versionSha = await resolveRealVisXLSha();
+    console.log('[realvisxl-controlnet] Using version SHA:', versionSha.slice(0, 16) + '…');
+    prediction = await client.predictions.create({ version: versionSha, input });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[realvisxl-controlnet] predictions.create FAILED:', msg);
